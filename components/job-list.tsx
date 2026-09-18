@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { AlertTriangle, Check, ExternalLink, Minus, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, Check, Minus, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -50,15 +50,15 @@ const COMPONENT_MAX: Record<string, number> = {
  * The list is a flex layout rather than a <table> because each row carries
  * controls and a dialog, but the columns still have to line up under their
  * labels, so the widths live in one place. The trailing width is the action
- * group measured: Why (w-16) + gap + link (size-8) + gap + four size-8 verdict
- * buttons with gap-1 between them.
+ * group measured: Why (w-16) + gap-2 + four size-8 verdict buttons with gap-1
+ * between them.
  */
 const COL = {
   fit: 'w-[126px] shrink-0',
   role: 'hidden w-28 shrink-0 sm:block',
   salary: 'hidden w-16 shrink-0 text-right sm:block',
   posted: 'hidden w-20 shrink-0 text-right md:block',
-  actions: 'w-[252px] shrink-0',
+  actions: 'w-[212px] shrink-0',
 } as const;
 
 function Header() {
@@ -190,7 +190,16 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="truncate font-medium">{job.title}</span>
+                {/* The title is the link to the posting. */}
+                <a
+                  href={job.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={job.title}
+                  className="truncate font-medium underline-offset-4 hover:underline"
+                >
+                  {job.title}
+                </a>
                 {job.blockerP > 0.5 ? (
                   // Status never rides on color alone: icon plus a written label.
                   <Badge variant="destructive" className="shrink-0 gap-1">
@@ -255,18 +264,6 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
                   <Breakdown job={job} />
                 </DialogContent>
               </Dialog>
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8 shrink-0"
-                nativeButton={false}
-                render={
-                  <a href={job.url} target="_blank" rel="noreferrer" aria-label="Open posting" />
-                }
-              >
-                <ExternalLink className="size-4" />
-              </Button>
 
               <VerdictButtons job={job} />
             </div>
