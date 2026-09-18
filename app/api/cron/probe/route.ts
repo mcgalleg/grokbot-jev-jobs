@@ -8,6 +8,7 @@
  * no pipeline state.
  */
 import { getSql, migrate, recordRun } from '@/lib/db/pg';
+import { profileSources } from '@/lib/profile';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -27,6 +28,9 @@ export async function GET(req: Request) {
     viaCron: req.headers.has('x-vercel-cron-schedule'),
     schedule: req.headers.get('x-vercel-cron-schedule'),
     region: process.env.VERCEL_REGION ?? 'local',
+    // Where each half of the profile came from. 'missing' here means the nightly
+    // run will throw the first time it has a posting to judge, and not before.
+    profile: profileSources(),
     stages: Object.fromEntries(counts.map((r) => [r.stage, r.n])),
     at: new Date().toISOString(),
   };

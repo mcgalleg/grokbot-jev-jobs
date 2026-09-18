@@ -1,9 +1,16 @@
-# What must NOT reach the deployment. This is a different question from
-# .gitignore: `profile/` is untracked but must still ship, because the scoring
-# function reads it at runtime.
+# What must NOT reach the deployment.
 
 # Resume, cover letters, outreach drafts. Nothing in the pipeline reads these.
 output/
+
+# The profile the scoring model reads.
+#
+# Excluded deliberately, even though the function needs it: builds from GitHub
+# never see it either, because it is git-ignored. Shipping it on CLI deploys but
+# not on git deploys would mean the two behave differently and only one of them
+# gets tested. It travels as PROFILE_SUMMARY / PROFILE_RESUME / PROFILE_TARGETS
+# instead — see lib/profile.ts and `pnpm profile:push`.
+profile/
 
 # The local SQLite working set, kept only as a backup of the original backfill.
 # Neon is the live database.
@@ -13,8 +20,3 @@ data/
 # Vercel injects the real values from project settings.
 .env
 .env.*
-
-# NOTE: profile/ is deliberately absent from this list. lib/profile.ts does a
-# readFileSync on profile/{summary,resume,targets}.md inside triage and score,
-# so excluding it makes the nightly run die with ENOENT the first time it has a
-# posting to judge — and not before, which is how it went unnoticed.

@@ -91,22 +91,30 @@ delete both, and `data/`, once you no longer want the local copy as a backup.
 ### Your profile
 
 `profile/` and `output/` are **git-ignored on purpose** — they hold a CV, cover
-letters and a salary floor, and git history is hard to scrub. So a fresh clone has
-no profile and cannot score anything until you write three files:
+letters and a salary floor, and git history is hard to scrub.
 
-| File | What it is | Size |
+| File | Env var | What it is |
 |---|---|---|
-| `profile/summary.md` | ~200 words on the candidate, for the cheap title pass | ~20 lines |
-| `profile/resume.md` | the full CV as markdown, for deep scoring | ~130 lines |
-| `profile/targets.md` | what a good role looks like, incl. any salary floor | ~40 lines |
+| `profile/summary.md` | `PROFILE_SUMMARY` | ~200 words on the candidate, for the cheap title pass |
+| `profile/resume.md` | `PROFILE_RESUME` | the full CV as markdown, for deep scoring |
+| `profile/targets.md` | `PROFILE_TARGETS` | what a good role looks like, incl. any salary floor |
 
-`lib/profile.ts` reads all three with `readFileSync` at runtime, so a missing file
-is an `ENOENT` inside triage and score, not a startup error — it surfaces the first
-time the pipeline has a posting to judge and not before.
+`lib/profile.ts` reads the env var first and falls back to the file. Locally you
+edit the markdown; the deployment reads the env vars, because a build from GitHub
+never sees git-ignored files. `profile/` is in `.vercelignore` so that a CLI deploy
+and a git deploy behave identically — otherwise only one of the two paths would
+ever be exercised.
 
-They are **not** in `.vercelignore`: the scoring function needs them on disk. That
-is a separate decision from whether they belong in version control, and conflating
-the two is how the nightly run first broke.
+**After editing any of the three, push them up:**
+
+```bash
+pnpm profile:push        # copies the files into the Vercel project env
+vercel deploy --prod     # or push to the connected branch
+```
+
+Forgetting this means the nightly run keeps scoring against the previous profile,
+which is silent. `/api/cron/probe` reports where each part came from
+(`env` / `disk` / `missing`) so the state is at least observable.
 
 ## Running it
 

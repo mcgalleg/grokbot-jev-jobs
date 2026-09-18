@@ -16,7 +16,8 @@
     "report": "tsx scripts/report.mts",
     "check:jev": "tsx scripts/check-jev.mts",
     "check:ats": "tsx scripts/check-ats.mts",
-    "migrate:neon": "tsx scripts/migrate-to-neon.mts"
+    "migrate:neon": "tsx scripts/migrate-to-neon.mts",
+    "profile:push": "tsx scripts/profile-push.mts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.85",
