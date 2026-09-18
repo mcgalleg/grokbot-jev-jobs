@@ -4,6 +4,7 @@ import {
   buildApplyRequestPayload,
   buildCallbackUrl,
   canStartApply,
+  shouldShowApplyDetail,
   callbackSecretFrom,
   decideCallback,
   parseCallbackBody,
@@ -23,6 +24,17 @@ describe('canStartApply', () => {
     assert.equal(canStartApply('skipped'), true);
     assert.equal(canStartApply('applying'), false);
     assert.equal(canStartApply('applied'), false);
+  });
+});
+
+describe('shouldShowApplyDetail', () => {
+  it('is for blocked, failed, and skipped — not applying or applied', () => {
+    assert.equal(shouldShowApplyDetail('blocked'), true);
+    assert.equal(shouldShowApplyDetail('failed'), true);
+    assert.equal(shouldShowApplyDetail('skipped'), true);
+    assert.equal(shouldShowApplyDetail('applying'), false);
+    assert.equal(shouldShowApplyDetail('applied'), false);
+    assert.equal(shouldShowApplyDetail(null), false);
   });
 });
 

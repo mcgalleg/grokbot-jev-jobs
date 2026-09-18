@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { ScoreMeter } from '@/components/score-meter';
 import { getApplyStatus, requestApply, setIgnored } from '@/app/actions';
-import { canStartApply, type ApplyStatus } from '@/lib/apply';
+import { canStartApply, shouldShowApplyDetail, type ApplyStatus } from '@/lib/apply';
 import { formatSalary } from '@/lib/format';
 import type { ScoredJob } from '@/lib/queries';
 
@@ -181,16 +181,12 @@ function ApplyStatusBadge({
   status: ApplyStatus | null;
   detail: string | null;
 }) {
-  if (!status) return null;
-  const title = detail ? `${APPLY_LABEL[status]}: ${detail}` : APPLY_LABEL[status];
-  if (status === 'applying') {
-    return (
-      <Badge variant="secondary" className="shrink-0 gap-1" title={title}>
-        <Loader2 className="size-3 animate-spin" />
-        Applying
-      </Badge>
-    );
-  }
+  // Applying is shown only on the Apply button so the row has one spinner.
+  if (!status || status === 'applying') return null;
+
+  const label = APPLY_LABEL[status];
+  const title = detail ? `${label}: ${detail}` : label;
+
   if (status === 'applied') {
     return (
       <Badge variant="secondary" className="shrink-0 gap-1" title={title}>
@@ -199,13 +195,14 @@ function ApplyStatusBadge({
       </Badge>
     );
   }
+
   return (
     <Badge
       variant={status === 'skipped' ? 'secondary' : 'destructive'}
       className="shrink-0"
       title={title}
     >
-      {APPLY_LABEL[status]}
+      {label}
     </Badge>
   );
 }
@@ -344,20 +341,20 @@ function JobRow({ job }: { job: ScoredJob }) {
   const salary = formatSalary(job.salary);
 
   return (
-    <div className="flex items-center gap-4 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
       <div className={COL.fit}>
         <ScoreMeter value={job.fitScore} muted={job.ignored} />
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+      <div className="min-w-[16rem] flex-1">
+        <div className="flex min-w-0 items-center gap-2">
           {/* The title is the link to the posting. */}
           <a
             href={job.url}
             target="_blank"
             rel="noreferrer"
             title={job.title}
-            className="truncate font-medium underline-offset-4 hover:underline"
+            className="min-w-0 truncate font-medium underline-offset-4 hover:underline"
           >
             {job.title}
           </a>
@@ -376,6 +373,11 @@ function JobRow({ job }: { job: ScoredJob }) {
           ) : null}
           <ApplyStatusBadge status={applyStatus} detail={applyDetail} />
         </div>
+        {shouldShowApplyDetail(applyStatus) && applyDetail ? (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground" title={applyDetail}>
+            {applyDetail}
+          </p>
+        ) : null}
         <div className="truncate text-sm text-muted-foreground">
           {job.company}
           {job.location ? ` · ${job.location}` : ''}
@@ -407,7 +409,7 @@ function JobRow({ job }: { job: ScoredJob }) {
         {job.posted?.label ?? '—'}
       </span>
 
-      <div className={`${COL.actions} flex items-center justify-end gap-2`}>
+      <div className={`${COL.actions} ml-auto flex items-center justify-end gap-2`}>
         <Dialog>
           <DialogTrigger
             render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}

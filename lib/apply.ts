@@ -54,6 +54,15 @@ export function canStartApply(status: ApplyStatus | null | undefined): boolean {
   return status == null || isRetryableApplyStatus(status);
 }
 
+/**
+ * Rudy's `detail` (knock-out quote, webhook error, skip reason) belongs next
+ * to these outcomes in the list. Applying is a spinner; Applied is success
+ * without a reason line.
+ */
+export function shouldShowApplyDetail(status: ApplyStatus | null | undefined): boolean {
+  return status === 'failed' || status === 'blocked' || status === 'skipped';
+}
+
 export function webhookAts(ats: string | null | undefined): WebhookAts | null {
   if (!ats) return null;
   return (WEBHOOK_ATS as readonly string[]).includes(ats) ? (ats as WebhookAts) : null;
