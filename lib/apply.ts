@@ -63,6 +63,32 @@ export function shouldShowApplyDetail(status: ApplyStatus | null | undefined): b
   return status === 'failed' || status === 'blocked' || status === 'skipped';
 }
 
+/**
+ * Title-row chip: Applied / Failed / Blocked / Skipped.
+ * Applying is owned by the Apply button so the row never shows two spinners.
+ */
+export function shouldShowApplyStatusBadge(
+  status: ApplyStatus | null | undefined,
+): status is Exclude<ApplyStatus, 'applying'> {
+  return status != null && status !== 'applying';
+}
+
+export type ApplyPollTick =
+  | { action: 'continue' }
+  | { action: 'settle'; status: ApplyStatus | null; detail: string | null };
+
+/**
+ * A poll result that should stop the in-flight spinner and refresh the list.
+ * `null` means the apply pointer is gone — also stop spinning.
+ */
+export function decideApplyPollTick(next: {
+  status: ApplyStatus | null;
+  detail: string | null;
+}): ApplyPollTick {
+  if (next.status === 'applying') return { action: 'continue' };
+  return { action: 'settle', status: next.status, detail: next.detail };
+}
+
 export function webhookAts(ats: string | null | undefined): WebhookAts | null {
   if (!ats) return null;
   return (WEBHOOK_ATS as readonly string[]).includes(ats) ? (ats as WebhookAts) : null;

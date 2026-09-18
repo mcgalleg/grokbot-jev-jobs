@@ -5,6 +5,8 @@ import {
   buildCallbackUrl,
   canStartApply,
   shouldShowApplyDetail,
+  shouldShowApplyStatusBadge,
+  decideApplyPollTick,
   callbackSecretFrom,
   decideCallback,
   parseCallbackBody,
@@ -35,6 +37,55 @@ describe('shouldShowApplyDetail', () => {
     assert.equal(shouldShowApplyDetail('applying'), false);
     assert.equal(shouldShowApplyDetail('applied'), false);
     assert.equal(shouldShowApplyDetail(null), false);
+  });
+});
+
+describe('shouldShowApplyStatusBadge', () => {
+  it('hides the title-row chip while applying so only the button spins', () => {
+    assert.equal(shouldShowApplyStatusBadge('applying'), false);
+    assert.equal(shouldShowApplyStatusBadge(null), false);
+    assert.equal(shouldShowApplyStatusBadge(undefined), false);
+    assert.equal(shouldShowApplyStatusBadge('applied'), true);
+    assert.equal(shouldShowApplyStatusBadge('failed'), true);
+    assert.equal(shouldShowApplyStatusBadge('blocked'), true);
+    assert.equal(shouldShowApplyStatusBadge('skipped'), true);
+  });
+});
+
+describe('decideApplyPollTick', () => {
+  it('keeps polling only while the pointer is still applying', () => {
+    assert.deepEqual(decideApplyPollTick({ status: 'applying', detail: null }), { action: 'continue' });
+  });
+
+  it('settles on a terminal write-back so the list can refresh', () => {
+    assert.deepEqual(decideApplyPollTick({ status: 'applied', detail: null }), {
+      action: 'settle',
+      status: 'applied',
+      detail: null,
+    });
+    assert.deepEqual(decideApplyPollTick({ status: 'failed', detail: 'webhook 502' }), {
+      action: 'settle',
+      status: 'failed',
+      detail: 'webhook 502',
+    });
+    assert.deepEqual(decideApplyPollTick({ status: 'blocked', detail: 'knock-out' }), {
+      action: 'settle',
+      status: 'blocked',
+      detail: 'knock-out',
+    });
+    assert.deepEqual(decideApplyPollTick({ status: 'skipped', detail: 'already in ATS' }), {
+      action: 'settle',
+      status: 'skipped',
+      detail: 'already in ATS',
+    });
+  });
+
+  it('settles when the pointer is gone so the spinner cannot hang', () => {
+    assert.deepEqual(decideApplyPollTick({ status: null, detail: null }), {
+      action: 'settle',
+      status: null,
+      detail: null,
+    });
   });
 });
 

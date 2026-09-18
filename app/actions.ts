@@ -1,5 +1,6 @@
 'use server';
 
+import { connection } from 'next/server';
 import {
   readApplyStatus,
   requestApply as startApply,
@@ -26,7 +27,11 @@ export async function setIgnored(url: string, ignored: boolean) {
 /**
  * Latest apply pointer for one posting. Used by the list while status is
  * `applying`, because `revalidatePath` cannot overwrite the row's local state.
+ *
+ * `connection()` marks the read as request-time so a poll cannot reuse a
+ * cached `applying` result after Rudy has already written back.
  */
 export async function getApplyStatus(url: string) {
+  await connection();
   return readApplyStatus(url);
 }
