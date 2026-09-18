@@ -1,14 +1,40 @@
-# Jev Job Search
+# grokbot-jev-jobs
 
-Scores public job postings against your resume using
+Scores public job postings against a resume using
 [TypeSafe AI's Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
-through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation).
+through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/modalities/evaluation),
+then applies through a dashboard **Apply** button that webhooks
+**Grok Bot (Resume Rudy)** to fill ATS forms and write status back.
 
 Jev is an evaluation model, not a text model. You give it a state and a set of
 typed questions; it returns choices, scores and boolean probabilities with
 calibrated confidence, in roughly half a second, for $0.042 per million input
 tokens with output tokens free. That makes it cheap enough to read every
 plausible posting every day.
+
+This repo is private (`mcgalleg/grokbot-jev-jobs`, renamed from `jev-job-search`).
+The Vercel project is `grokbot-jev-jobs`. Production hosts:
+
+- [https://jev-job-search.vercel.app](https://jev-job-search.vercel.app) — legacy primary
+- [https://grokbot-jev-jobs.vercel.app](https://grokbot-jev-jobs.vercel.app) — alias
+
+Local checkout on Mike’s machine: `/home/mike/Projects/grokbot-jev-jobs`.
+
+## Architecture
+
+```
+Public feed ──► ingest ──► jev triage ──► ATS describe ──► jev score ──► Neon
+                                                                    │
+Dashboard Apply ──► apply_attempts + applies ──► POST Rudy webhook ─┘
+                         ▲
+                         └── POST /api/webhooks/rudy-apply (secret-gated write-back)
+```
+
+Two Jev uses, do not mix them up:
+
+1. **This app** — title triage and full-text scoring via the AI Gateway.
+2. **Rudy (production apply)** — a sparse page-brain that scans for knock-outs
+   *before* a heavy ATS fill. It is not there to make fill faster.
 
 ## The funnel
 
@@ -71,25 +97,67 @@ an error — and so is a 404 on a *board* endpoint, which means the company's bo
 is gone or its slug never matched. Both are dead ends, not faults, and counting
 them as errors would bury the real ones in the nightly summary.
 
-## Setup
+## Apply → Rudy → write-back
 
-```bash
-pnpm install
-vercel link
-vercel env pull .env.local      # DATABASE_URL, AI_GATEWAY_API_KEY, CRON_SECRET, Rudy apply secrets
-pnpm check:jev                  # one live call: confirms the key, prints latency + cost
+There is no manual Applied toggle. **Apply** on the dashboard starts an
+automated application; only Rudy’s secret-gated callback may mark a posting
+Applied.
+
+```
+unset ──Apply──► applying ──callback──► applied | failed | blocked | skipped
+                   ▲                         │
+                   └──────── retry ──────────┘
 ```
 
-Secrets live only in Vercel project settings and in `.env.local`, which is
-git-ignored. `vercel env pull` brings down the Neon URL, `CRON_SECRET` and the
-profile, so a fresh clone with access to the project is ready to run. See
-`.env.example` for the full list, including the Resume Rudy apply webhook.
+1. The UI **Apply** click creates an apply attempt (`applying`) and POSTs a
+   webhook to Rudy with the job URL, ATS, universal CV/cover *paths*, and a
+   `callbackUrl`.
+2. Rudy fills the ATS (Ashby, Greenhouse, Workday, Lever, and similar) and, in
+   production, **submits for real**.
+3. Rudy POSTs `POST /api/webhooks/rudy-apply`. That route is gated by
+   `RUDY_CALLBACK_SECRET` (`Authorization: Bearer` or `x-rudy-secret`) and sets
+   `applied` | `failed` | `blocked` | `skipped`.
+4. The client polls while status is `applying` (~2.5s). The button shows a
+   single **Applying** spinner — no second spinner on the row. `blocked`,
+   `failed`, and `skipped` keep the row on **Open** with **Retry**, and a short
+   plain-language `detail` under the title (knock-out reason, webhook error,
+   skip reason). `applied` is terminal.
 
-### Resume Rudy apply webhook
+A second Apply while status is `applying` is refused. `ensureApplySchema()`
+creates the Neon tables on read and write, so a fresh database does not 500:
 
-Apply on the dashboard starts an automated application. The app POSTs a JSON
-payload to Resume Rudy and waits for a secret-gated write-back before anything
-is marked Applied.
+| Table | Role |
+|---|---|
+| `apply_attempts` | ledger: one row per Apply click; partial unique index locks one in-flight attempt per job URL |
+| `applies` | current pointer the dashboard joins; callback matching is `attemptId === this row` |
+
+**Ignore** is still a local “not interested” mark. It hides the row from
+**Open** and toggles clear. It does not talk to Rudy. Starting Apply clears a
+prior Ignore so the in-flight row stays visible.
+
+### Production apply policy (Rudy)
+
+Documented here so a later reader knows what Apply actually does. No secrets.
+
+- **Efficient fill:** one browser runner, autofill, batch screening.
+- **Sparse Jev page-brain:** a knock-out scan *before* the heavy fill — visa /
+  sponsorship, clearance, relocate, onsite / multi-day office. Then classify
+  the outcome. Jev is used for an ambiguous next-action only, not to go faster.
+- **Example:** a San Francisco 5-days/week onsite role vs a Lakewood, CO remote
+  candidate is `blocked`, with a short plain reason under the title.
+
+### Universal CV and cover
+
+Every apply uses the same two files. There is no per-company cover letter.
+`output/` is git-ignored; the deployment never opens the PDFs. The webhook
+payload sends *local filesystem paths* for the machine that runs Rudy:
+
+- Resume: `/home/mike/Projects/grokbot-jev-jobs/output/mike-gallegos-cv.pdf`
+- Cover: `/home/mike/Projects/grokbot-jev-jobs/output/universal-cover-letter.pdf`
+
+Do not commit those files or paste resume text into this repo.
+
+### Env vars (names only)
 
 | Env var | Direction | What it is |
 |---|---|---|
@@ -97,24 +165,35 @@ is marked Applied.
 | `RUDY_APPLY_WEBHOOK_SECRET` | outbound | `Authorization: Bearer …` on that POST |
 | `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send to `/api/webhooks/rudy-apply` |
 | `APP_BASE_URL` | outbound | Preferred public origin used to build `callbackUrl` |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | inbound | Vercel Deployment Protection bypass so Rudy can reach the callback without a session cookie |
 
 `callbackUrl` is derived in this order: `APP_BASE_URL`, then
 `NEXT_PUBLIC_APP_URL`, then `https://$VERCEL_URL` (injected on Vercel), then
 `http://localhost:3000`. Set `APP_BASE_URL` in production so Rudy writes back
-to the stable host, not a per-deployment URL.
+to the stable host (legacy primary `https://jev-job-search.vercel.app`), not a
+per-deployment URL.
 
 The dashboard is behind **Vercel Authentication**, so Rudy cannot present a
 session cookie. `/api/webhooks/rudy-apply` is gated by `RUDY_CALLBACK_SECRET`
-instead (`Authorization: Bearer` or `x-rudy-secret`). To get past Vercel
-Authentication itself, set `VERCEL_AUTOMATION_BYPASS_SECRET`; the payload's
-`callbackUrl` then includes `?x-vercel-protection-bypass=…`. Rudy can also send
-that value as the `x-vercel-protection-bypass` header.
+instead. To get past Vercel Authentication itself, set
+`VERCEL_AUTOMATION_BYPASS_SECRET`; the payload's `callbackUrl` then includes
+`?x-vercel-protection-bypass=…`. Rudy can also send that value as the
+`x-vercel-protection-bypass` header.
 
-Every apply uses the same two files on Mike's machine — there is no
-per-company cover letter:
+See `.env.example` for the full list. Never commit real secret values.
 
-- Resume: `/home/mike/Projects/jev-job-search/output/mike-gallegos-cv.pdf`
-- Cover: `/home/mike/Projects/jev-job-search/output/universal-cover-letter.pdf`
+## Setup
+
+```bash
+pnpm install
+vercel link                 # project grokbot-jev-jobs
+vercel env pull .env.local  # DATABASE_URL, AI_GATEWAY_API_KEY, CRON_SECRET, Rudy apply secrets
+pnpm check:jev              # one live call: confirms the key, prints latency + cost
+```
+
+Secrets live only in Vercel project settings and in `.env.local`, which is
+git-ignored. `vercel env pull` brings down the Neon URL, `CRON_SECRET` and the
+profile, so a fresh clone with access to the project is ready to run.
 
 ### Two ways to reach the AI Gateway, two budgets
 
@@ -122,8 +201,8 @@ Worth knowing, because it is easy to think one budget covers everything:
 
 | Where | Authenticates with | Budget |
 |---|---|---|
-| Local CLI | `AI_GATEWAY_API_KEY` from `.env.local` | `api-key jev-job-search-poc`, $25/mo |
-| The deployment | `VERCEL_OIDC_TOKEN`, injected automatically | `project jev-job-search`, $25/mo |
+| Local CLI | `AI_GATEWAY_API_KEY` from `.env.local` | api-key budget, $25/mo |
+| The deployment | `VERCEL_OIDC_TOKEN`, injected automatically | project `grokbot-jev-jobs`, $25/mo |
 
 `AI_GATEWAY_API_KEY` is deliberately **not** in the Vercel project environment —
 a deployed function does not need it, and a long-lived key in the environment is
@@ -247,17 +326,9 @@ rather than from jev:
 
 ### Working the list
 
-**Apply** starts an automated application. The server creates an attempt, sets
-the posting to `applying`, POSTs to Resume Rudy (`RUDY_APPLY_WEBHOOK_URL`) with
-the universal CV and cover paths, and returns. The row shows **Applying** until
-Rudy POSTs `/api/webhooks/rudy-apply` with the matching `attemptId`.
-
-Only that write-back may set **Applied**. There is no manual Applied toggle.
-Failed, blocked, and skipped stay on **Open** with a Retry button; a second
-Apply is refused while status is `applying`.
-
-**Ignore** is still a local "not interested" mark. It hides the row from
-**Open** and toggles clear. It does not talk to Rudy.
+**Apply** starts an automated application (see [Apply → Rudy → write-back](#apply--rudy--write-back)).
+The button is the only spinner. Failed / blocked / skipped stay on **Open** with
+**Retry** and a one-line `detail` under the title.
 
 The score is taken at face value. There is deliberately no thumbs up/down and no
 agreement metric — grading jev's ranking against your own is a bigger project
@@ -344,9 +415,9 @@ following one.
 
 ### Deploying
 
-The Vercel project is connected to `mcgalleg/jev-job-search` (private), production
-branch `master`. Pushing to `master` builds and promotes automatically; branches
-and pull requests get preview deployments.
+The Vercel project `grokbot-jev-jobs` is connected to `mcgalleg/grokbot-jev-jobs`
+(private), production branch `master`. Pushing to `master` builds and promotes
+automatically; branches and pull requests get preview deployments.
 
 ```bash
 git push                 # code changes
@@ -365,17 +436,18 @@ Vercel account, with no auth code in the app and no shared password. External
 requests get a 302, including to the cron path. Cron is exempt and carries
 `CRON_SECRET`. Resume Rudy's write-back is not a session: it uses
 `RUDY_CALLBACK_SECRET` plus, when needed, the Vercel automation bypass (see
-"Resume Rudy apply webhook" above). `.vercelignore` keeps `output/`,
-`profile/` and `data/` out of the build context.
+[Apply → Rudy → write-back](#apply--rudy--write-back)). `.vercelignore` keeps
+`output/`, `profile/` and `data/` out of the build context.
 
 ## Stack
 
 Next.js 16 App Router, React 19, Tailwind 4, shadcn/ui (Base UI),
 AI SDK 7 `experimental_evaluate`, Neon Postgres via `@neondatabase/serverless`.
 
-One database, one schema (`lib/db/pg-schema.ts`). The four stages live in
-`lib/stages/` and are called by both the cron route and the CLI, so the
-scheduled run and a hand-run cannot drift apart.
+One database, one schema (`lib/db/pg-schema.ts`), including `apply_attempts` and
+`applies`. The four pipeline stages live in `lib/stages/` and are called by both
+the cron route and the CLI, so the scheduled run and a hand-run cannot drift
+apart. Apply lifecycle lives in `lib/apply.ts` / `lib/apply-server.ts`.
 
 ## Known limits
 
@@ -394,3 +466,5 @@ scheduled run and a hand-run cannot drift apart.
   not retry a failed one. The stages are idempotent and the ingest window is
   anchored to the last successful run, so a missed night self-heals — but a run
   that fails is only visible in the `runs` table and the Vercel logs.
+- The apply webhook payload still names a `source` of `jev-job-search` in code
+  (`lib/apply.ts`). Rudy keys off the event and paths, not the display name.
