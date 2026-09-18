@@ -41,8 +41,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local job database
-data/
+# local job database (keep checked-in apply notes)
+/data/*
+!/data/apply-efficiency-learnings.md
 
 # Personal documents. Deliberately untracked: git history is hard to scrub, and
 # this repo may gain a remote later.

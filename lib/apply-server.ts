@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { ensureApplySchema, getDb, hasDatabase } from '@/lib/db/pg';
 import { applyAttempts, applies, jobs, labels } from '@/lib/db/pg-schema';
@@ -15,6 +15,7 @@ import {
   canStartApply,
   decideCallback,
   isApplyStatus,
+  settleFromStatuses,
 } from '@/lib/apply';
 
 const WEBHOOK_TIMEOUT_MS = 8_000;
@@ -182,6 +183,83 @@ export async function readApplyStatus(jobUrl: string): Promise<{
   };
 }
 
+export type RudyApplyStatus = {
+  found: boolean;
+  conflict?: boolean;
+  status: ApplyStatus | null;
+  detail: string | null;
+  attemptId: string | null;
+};
+
+/**
+ * Pre-Submit lookup for Rudy. `attemptId` reads the ledger row; `jobUrl`
+ * reads the current pointer. When both are sent, they must name the same
+ * attempt or this is a conflict (same rule as the callback).
+ */
+export async function readRudyApplyStatus(query: {
+  attemptId?: string;
+  jobUrl?: string;
+}): Promise<RudyApplyStatus> {
+  await ensureApplySchema();
+  const db = getDb();
+
+  if (query.attemptId) {
+    const [attempt] = await db
+      .select({
+        id: applyAttempts.id,
+        jobUrl: applyAttempts.jobUrl,
+        status: applyAttempts.status,
+        detail: applyAttempts.detail,
+      })
+      .from(applyAttempts)
+      .where(eq(applyAttempts.id, query.attemptId))
+      .limit(1);
+
+    if (!attempt) {
+      return { found: false, status: null, detail: null, attemptId: query.attemptId };
+    }
+    if (query.jobUrl && attempt.jobUrl !== query.jobUrl) {
+      return {
+        found: false,
+        conflict: true,
+        status: null,
+        detail: null,
+        attemptId: query.attemptId,
+      };
+    }
+    return {
+      found: true,
+      status: isApplyStatus(attempt.status) ? attempt.status : null,
+      detail: attempt.detail ?? null,
+      attemptId: attempt.id,
+    };
+  }
+
+  if (!query.jobUrl) {
+    return { found: false, status: null, detail: null, attemptId: null };
+  }
+
+  const [row] = await db
+    .select({
+      status: applies.status,
+      detail: applies.detail,
+      attemptId: applies.attemptId,
+    })
+    .from(applies)
+    .where(eq(applies.url, query.jobUrl))
+    .limit(1);
+
+  if (!row) {
+    return { found: false, status: null, detail: null, attemptId: null };
+  }
+  return {
+    found: true,
+    status: isApplyStatus(row.status) ? row.status : null,
+    detail: row.detail ?? null,
+    attemptId: row.attemptId,
+  };
+}
+
 export async function setIgnored(jobUrl: string, ignored: boolean): Promise<void> {
   if (!jobUrl) throw new Error('url is required');
   const db = getDb();
@@ -248,14 +326,21 @@ async function settleAttempt(
   occurredAt: Date,
 ): Promise<void> {
   const db = getDb();
+  const fromStatuses = [...settleFromStatuses(status)];
   await db
     .update(applyAttempts)
     .set({ status, detail, completedAt: occurredAt })
-    .where(and(eq(applyAttempts.id, attemptId), eq(applyAttempts.status, 'applying')));
+    .where(and(eq(applyAttempts.id, attemptId), inArray(applyAttempts.status, fromStatuses)));
   await db
     .update(applies)
     .set({ status, detail, completedAt: occurredAt })
-    .where(and(eq(applies.url, jobUrl), eq(applies.attemptId, attemptId), eq(applies.status, 'applying')));
+    .where(
+      and(
+        eq(applies.url, jobUrl),
+        eq(applies.attemptId, attemptId),
+        inArray(applies.status, fromStatuses),
+      ),
+    );
 }
 
 async function postRudyWebhook(

@@ -10,6 +10,10 @@
  *                       ▲                         │
  *                       └──────── retry ──────────┘  (failed / blocked / skipped)
  *
+ * A later `applied` for the same attemptId+jobUrl overwrites blocked / failed /
+ * skipped (confirmation email / truth wins). Those statuses never overwrite
+ * `applied`.
+ *
  * A second Apply while `applying` is refused. `applied` is terminal for the
  * posting — Rudy already reported success.
  */
@@ -47,6 +51,18 @@ export function isTerminalApplyStatus(value: string): value is TerminalApplyStat
 
 export function isRetryableApplyStatus(value: string): value is RetryableApplyStatus {
   return (RETRYABLE_APPLY_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * Statuses `settleAttempt` may leave, given the inbound terminal status.
+ * `applied` may correct a same-attempt blocked/failed/skipped; a lesser
+ * terminal may only settle from `applying`, never from `applied`.
+ */
+export function settleFromStatuses(nextStatus: TerminalApplyStatus): readonly ApplyStatus[] {
+  if (nextStatus === 'applied') {
+    return ['applying', 'blocked', 'failed', 'skipped'];
+  }
+  return ['applying'];
 }
 
 /** Apply is allowed when there is no attempt, or the last one can be retried. */
@@ -249,9 +265,12 @@ export type CallbackDecision =
   | { action: 'reject'; status: number; error: string };
 
 /**
- * Only the active attempt for that jobUrl may advance, and only from
- * `applying` to a terminal status. A duplicate of the same terminal status
- * is a no-op so Rudy can retry its write-back.
+ * Only the active attempt for that jobUrl may advance.
+ *
+ * From `applying`, any terminal status is accepted. A later `applied` for the
+ * same attemptId+jobUrl may overwrite blocked / failed / skipped (truth wins).
+ * A lesser terminal never overwrites `applied`. A duplicate of the same
+ * terminal status is a no-op so Rudy can retry its write-back.
  */
 export function decideCallback(input: {
   activeAttemptId: string | null;
@@ -274,14 +293,43 @@ export function decideCallback(input: {
   if (input.activeStatus === input.nextStatus) {
     return { action: 'idempotent' };
   }
-  if (input.activeStatus !== 'applying') {
-    return {
-      action: 'reject',
-      status: 409,
-      error: `cannot advance from ${input.activeStatus} to ${input.nextStatus}`,
-    };
+  if (input.activeStatus === 'applying') {
+    return { action: 'accept' };
   }
-  return { action: 'accept' };
+  if (input.nextStatus === 'applied' && isRetryableApplyStatus(input.activeStatus)) {
+    return { action: 'accept' };
+  }
+  return {
+    action: 'reject',
+    status: 409,
+    error: `cannot advance from ${input.activeStatus} to ${input.nextStatus}`,
+  };
+}
+
+export type ParsedRudyStatusQuery =
+  | { ok: true; attemptId?: string; jobUrl?: string }
+  | { ok: false; error: string };
+
+/**
+ * Rudy's pre-Submit status check: `attemptId` and/or `jobUrl` query params.
+ */
+export function parseRudyStatusQuery(searchParams: URLSearchParams): ParsedRudyStatusQuery {
+  const attemptId = searchParams.get('attemptId')?.trim() ?? '';
+  const jobUrl = searchParams.get('jobUrl')?.trim() ?? '';
+  if (!attemptId && !jobUrl) {
+    return { ok: false, error: 'attemptId or jobUrl is required' };
+  }
+  if (attemptId && !UUID_RE.test(attemptId)) {
+    return { ok: false, error: 'attemptId must be a uuid' };
+  }
+  if (jobUrl && !/^https?:\/\//.test(jobUrl)) {
+    return { ok: false, error: 'jobUrl must be an http(s) url' };
+  }
+  return {
+    ok: true,
+    ...(attemptId ? { attemptId } : {}),
+    ...(jobUrl ? { jobUrl } : {}),
+  };
 }
 
 function stripTrailingSlash(value: string): string {

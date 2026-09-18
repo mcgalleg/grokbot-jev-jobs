@@ -27,7 +27,7 @@ Public feed ──► ingest ──► jev triage ──► ATS describe ──�
                                                                     │
 Dashboard Apply ──► apply_attempts + applies ──► POST Rudy webhook ─┘
                          ▲
-                         └── POST /api/webhooks/rudy-apply (secret-gated write-back)
+                         └── GET/POST /api/webhooks/rudy-apply (secret-gated status + write-back)
 ```
 
 Two Jev uses, do not mix them up:
@@ -116,8 +116,14 @@ unset ──Apply──► applying ──callback──► applied | failed | b
    production, **submits for real**.
 3. Rudy POSTs `POST /api/webhooks/rudy-apply`. That route is gated by
    `RUDY_CALLBACK_SECRET` (`Authorization: Bearer` or `x-rudy-secret`) and sets
-   `applied` | `failed` | `blocked` | `skipped`.
-4. The client polls while status is `applying` (~2.5s). The button shows a
+   `applied` | `failed` | `blocked` | `skipped`. A later `applied` for the same
+   `attemptId`+`jobUrl` overwrites `blocked` / `failed` / `skipped` (truth
+   wins — e.g. a confirmation email after a race). Those statuses never
+   overwrite an existing `applied`.
+4. Before Submit, Rudy can `GET /api/webhooks/rudy-apply?attemptId=` or
+   `?jobUrl=` with the same Bearer secret and read `{ status, detail, attemptId }`.
+   Abort if the attempt is already terminal.
+5. The client polls while status is `applying` (~2.5s). The button shows a
    single **Applying** spinner — no second spinner on the row. `blocked`,
    `failed`, and `skipped` keep the row on **Open** with **Retry**, and a short
    plain-language `detail` under the title (knock-out reason, webhook error,
@@ -139,12 +145,19 @@ prior Ignore so the in-flight row stays visible.
 
 Documented here so a later reader knows what Apply actually does. No secrets.
 
-- **Efficient fill:** one browser runner, autofill, batch screening.
+- **Efficient fill:** one browser runner, autofill, batch screening. A second
+  runner on the same posting is a race — re-check knock-out immediately before
+  Submit and abort if `GET /api/webhooks/rudy-apply` already shows a terminal
+  status.
 - **Sparse Jev page-brain:** a knock-out scan *before* the heavy fill — visa /
   sponsorship, clearance, relocate, onsite / multi-day office. Then classify
   the outcome. Jev is used for an ambiguous next-action only, not to go faster.
+  Browser fill dominates wall clock.
 - **Example:** a San Francisco 5-days/week onsite role vs a Lakewood, CO remote
   candidate is `blocked`, with a short plain reason under the title.
+
+Production incidents and the overwrite/GET contract are in
+`data/apply-efficiency-learnings.md`.
 
 ### Universal CV and cover
 
@@ -163,7 +176,7 @@ Do not commit those files or paste resume text into this repo.
 |---|---|---|
 | `RUDY_APPLY_WEBHOOK_URL` | outbound | Where Apply POSTs the request |
 | `RUDY_APPLY_WEBHOOK_SECRET` | outbound | `Authorization: Bearer …` on that POST |
-| `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send to `/api/webhooks/rudy-apply` |
+| `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send on GET/POST `/api/webhooks/rudy-apply` |
 | `APP_BASE_URL` | outbound | Preferred public origin used to build `callbackUrl` |
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | inbound | Vercel Deployment Protection bypass so Rudy can reach the callback without a session cookie |
 
