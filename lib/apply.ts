@@ -27,9 +27,9 @@ export const WEBHOOK_ATS = ['Greenhouse', 'Ashby', 'Workday', 'Lever'] as const;
 export type WebhookAts = (typeof WEBHOOK_ATS)[number];
 
 /** Paths on Mike's machine. Rudy reads these; the deployment never opens them. */
-export const UNIVERSAL_RESUME_PATH = '/home/mike/Projects/jev-job-search/output/mike-gallegos-cv.pdf';
+export const UNIVERSAL_RESUME_PATH = '/home/mike/Projects/grokbot-jev-jobs/output/mike-gallegos-cv.pdf';
 export const UNIVERSAL_COVER_PATH =
-  '/home/mike/Projects/jev-job-search/output/universal-cover-letter.pdf';
+  '/home/mike/Projects/grokbot-jev-jobs/output/universal-cover-letter.pdf';
 
 export const APPLY_SOURCE = 'jev-job-search';
 export const APPLY_EVENT = 'apply-request';
