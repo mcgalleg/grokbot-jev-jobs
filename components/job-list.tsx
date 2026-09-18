@@ -14,7 +14,6 @@ import { getApplyStatus, requestApply, setIgnored } from '@/app/actions';
 import {
   canStartApply,
   decideApplyPollTick,
-  isTerminalApplyStatus,
   shouldShowApplyDetail,
   shouldShowApplyStatusBadge,
   type ApplyStatus,
@@ -68,21 +67,13 @@ function useApplyProgress(url: string, initial: { status: ApplyStatus | null; de
   const [applyStatus, setApplyStatus] = useState(initial.status);
   const [applyDetail, setApplyDetail] = useState(initial.detail);
 
-  // After router.refresh(), adopt a terminal server pointer. Do not copy
-  // `applying` or null back over an optimistic in-flight click.
-  useEffect(() => {
-    if (initial.status && isTerminalApplyStatus(initial.status)) {
-      setApplyStatus(initial.status);
-      setApplyDetail(initial.detail);
-    }
-  }, [initial.status, initial.detail]);
-
   useEffect(() => {
     if (applyStatus !== 'applying') return;
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
     let failures = 0;
+    let stillApplyingTicks = 0;
 
     const tick = async () => {
       try {
@@ -96,6 +87,10 @@ function useApplyProgress(url: string, initial: { status: ApplyStatus | null; de
           router.refresh();
           return;
         }
+        // Stale `applying` reads still refresh the route so Open/Applied
+        // can drop or move the row even if the pointer action is cached.
+        stillApplyingTicks += 1;
+        if (stillApplyingTicks % 4 === 0) router.refresh();
       } catch {
         if (cancelled) return;
         failures += 1;
@@ -358,7 +353,9 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
     <div className="divide-y rounded-lg border">
       <Header />
       {jobs.map((job) => (
-        <JobRow key={job.url} job={job} />
+        // Remount when the server pointer changes so a refresh after Rudy
+        // write-back replaces local `applying` without an effect.
+        <JobRow key={`${job.url}:${job.applyStatus ?? 'none'}`} job={job} />
       ))}
     </div>
   );

@@ -67,7 +67,9 @@ export function shouldShowApplyDetail(status: ApplyStatus | null | undefined): b
  * Title-row chip: Applied / Failed / Blocked / Skipped.
  * Applying is owned by the Apply button so the row never shows two spinners.
  */
-export function shouldShowApplyStatusBadge(status: ApplyStatus | null | undefined): boolean {
+export function shouldShowApplyStatusBadge(
+  status: ApplyStatus | null | undefined,
+): status is Exclude<ApplyStatus, 'applying'> {
   return status != null && status !== 'applying';
 }
 
