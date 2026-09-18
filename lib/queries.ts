@@ -1,0 +1,145 @@
+import 'server-only';
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { getDb, hasDatabase } from './db/pg';
+import { jobs, labels, runs } from './db/pg-schema';
+
+export interface ScoredJob {
+  url: string;
+  title: string;
+  company: string;
+  location: string | null;
+  ats: string | null;
+  fitScore: number;
+  fitConfidence: number;
+  blockerP: number;
+  compBelowFloorP: number;
+  role: string;
+  components: Record<string, number>;
+  answers: Record<string, { type: string; choice?: string; score?: number; probability?: number }>;
+  salary: { p25?: number; median?: number; p75?: number; n?: number } | null;
+  descriptionChars: number | null;
+  verdict: string | null;
+  note: string | null;
+}
+
+export interface Funnel {
+  stages: Record<string, number>;
+  scored: number;
+  strong: number;
+  unlabeled: number;
+  spendUsd: number;
+  lastIngest: string | null;
+}
+
+/** Fit score at or above this reads as a real candidate match. */
+export const STRONG_THRESHOLD = 6;
+
+const EMPTY_FUNNEL: Funnel = {
+  stages: {},
+  scored: 0,
+  strong: 0,
+  unlabeled: 0,
+  spendUsd: 0,
+  lastIngest: null,
+};
+
+interface ScoreJson {
+  answers?: ScoredJob['answers'];
+  components?: Record<string, number>;
+}
+
+/**
+ * Counters for the stat tiles. All live — the pipeline and the dashboard share
+ * one database, so there is nothing to snapshot.
+ */
+export async function getFunnel(): Promise<Funnel> {
+  if (!hasDatabase()) return EMPTY_FUNNEL;
+  const db = getDb();
+
+  const [stageRows, counts, spend, lastIngest] = await Promise.all([
+    db.select({ stage: jobs.stage, n: sql<number>`count(*)::int` }).from(jobs).groupBy(jobs.stage),
+    db
+      .select({
+        scored: sql<number>`count(*) filter (where ${jobs.stage} = 'scored')::int`,
+        strong: sql<number>`count(*) filter (where ${jobs.fitScore} >= ${STRONG_THRESHOLD})::int`,
+        unlabeled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is null)::int`,
+      })
+      .from(jobs)
+      .leftJoin(labels, eq(labels.url, jobs.url)),
+    db.select({ total: sql<number>`coalesce(sum((${runs.stats}->>'cost')::float8), 0)` }).from(runs),
+    db
+      .select({ at: sql<string | null>`max(${runs.finishedAt})::text` })
+      .from(runs)
+      .where(eq(runs.kind, 'ingest')),
+  ]);
+
+  const row = counts[0] ?? { scored: 0, strong: 0, unlabeled: 0 };
+  return {
+    stages: Object.fromEntries(stageRows.map((r) => [r.stage, r.n])),
+    scored: row.scored,
+    strong: row.strong,
+    unlabeled: row.unlabeled,
+    spendUsd: Number(spend[0]?.total ?? 0),
+    lastIngest: lastIngest[0]?.at ?? null,
+  };
+}
+
+export type JobFilter = 'top' | 'all' | 'labeled';
+
+export async function getJobs(filter: JobFilter = 'top', limit = 100): Promise<ScoredJob[]> {
+  if (!hasDatabase()) return [];
+  const db = getDb();
+
+  // The table now holds every stage, so scored-only is part of each filter.
+  const scored = eq(jobs.stage, 'scored');
+  const where = {
+    top: and(scored, isNull(labels.url)),
+    all: scored,
+    labeled: and(scored, isNotNull(labels.url)),
+  }[filter];
+
+  const rows = await db
+    .select({
+      url: jobs.url,
+      title: jobs.title,
+      company: jobs.company,
+      location: jobs.location,
+      ats: jobs.ats,
+      fitScore: jobs.fitScore,
+      fitConfidence: jobs.fitConfidence,
+      blockerP: jobs.blockerP,
+      scoreJson: jobs.scoreJson,
+      salary: jobs.salary,
+      descriptionChars: jobs.descriptionChars,
+      verdict: labels.verdict,
+      note: labels.note,
+    })
+    .from(jobs)
+    .leftJoin(labels, eq(labels.url, jobs.url))
+    .where(where)
+    .orderBy(desc(jobs.fitScore))
+    .limit(limit);
+
+  return rows.map((r) => {
+    const score = (r.scoreJson ?? {}) as ScoreJson;
+    const answers = score.answers ?? {};
+    return {
+      url: r.url,
+      title: r.title.trim(),
+      company: r.company,
+      location: r.location,
+      ats: r.ats,
+      fitScore: Number(r.fitScore ?? 0),
+      fitConfidence: Number(r.fitConfidence ?? 0),
+      blockerP: Number(r.blockerP ?? 0),
+      compBelowFloorP: Number(answers.compBelowFloor?.probability ?? 0),
+      role: answers.role?.choice ?? 'unknown',
+      components: score.components ?? {},
+      answers,
+      salary: (r.salary ?? null) as ScoredJob['salary'],
+      descriptionChars: r.descriptionChars,
+      verdict: r.verdict,
+      note: r.note,
+    };
+  });
+}

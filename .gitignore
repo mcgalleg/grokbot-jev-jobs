@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local job database
+data/
+
+# Personal documents. Deliberately untracked: git history is hard to scrub, and
+# this repo may gain a remote later.
+#   output/   CV, cover letters, outreach PDFs — nothing in the pipeline reads these
+#   profile/  resume, targets and summary — live config that lib/jev reads on every
+#             scoring call, and it carries the salary floor. See "Your profile" in
+#             the README for what a fresh clone needs to recreate.
+output/
+profile/

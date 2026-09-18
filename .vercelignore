@@ -1,0 +1,20 @@
+# What must NOT reach the deployment. This is a different question from
+# .gitignore: `profile/` is untracked but must still ship, because the scoring
+# function reads it at runtime.
+
+# Resume, cover letters, outreach drafts. Nothing in the pipeline reads these.
+output/
+
+# The local SQLite working set, kept only as a backup of the original backfill.
+# Neon is the live database.
+data/
+
+# Belt and braces: the gateway key, the Neon URL and CRON_SECRET live here.
+# Vercel injects the real values from project settings.
+.env
+.env.*
+
+# NOTE: profile/ is deliberately absent from this list. lib/profile.ts does a
+# readFileSync on profile/{summary,resume,targets}.md inside triage and score,
+# so excluding it makes the nightly run die with ENOENT the first time it has a
+# posting to judge — and not before, which is how it went unnoticed.

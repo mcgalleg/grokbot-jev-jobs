@@ -1,69 +1,81 @@
-import Image from "next/image";
+import { StatTiles } from '@/components/stat-tiles';
+import { JobList } from '@/components/job-list';
+import { getFunnel, getJobs, STRONG_THRESHOLD, type JobFilter } from '@/lib/queries';
 
-export default function Home() {
+// Counts and verdicts change on every button press, so never serve a cached page.
+export const dynamic = 'force-dynamic';
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
+  const filter: JobFilter = tab === 'all' || tab === 'labeled' ? tab : 'top';
+
+  const [funnel, jobs] = await Promise.all([getFunnel(), getJobs(filter, 150)]);
+
+  const screened = funnel.stages.triage_reject ?? 0;
+  const stats = [
+    { label: 'Scored', value: funnel.scored.toLocaleString(), hint: 'full description read' },
+    {
+      label: `Strong (${STRONG_THRESHOLD}+)`,
+      value: funnel.strong.toLocaleString(),
+      hint: 'worth a real look',
+    },
+    { label: 'Awaiting review', value: funnel.unlabeled.toLocaleString(), hint: 'no verdict yet' },
+    {
+      label: 'Jev spend',
+      value: `$${funnel.spendUsd.toFixed(3)}`,
+      hint: `${screened.toLocaleString()} rejected at triage`,
+    },
+  ];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
+    <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold tracking-tight">Job fit, scored by jev</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Postings from the public aggregator feed, screened in code, triaged and scored by
+          TypeSafe&nbsp;jev through the Vercel AI Gateway.
+          {funnel.lastIngest ? ` Last ingest ${funnel.lastIngest.slice(0, 16).replace('T', ' ')}.` : ''}
+        </p>
+      </header>
+
+      <div className="mb-6">
+        <StatTiles stats={stats} />
+      </div>
+
+      <nav className="mb-4 inline-flex items-center gap-1 rounded-lg bg-muted p-1">
+        {(
+          [
+            ['top', 'Needs review'],
+            ['all', 'All scored'],
+            ['labeled', 'Labelled'],
+          ] as const
+        ).map(([key, label]) => (
           <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            key={key}
+            href={`/?tab=${key}`}
+            aria-current={filter === key ? 'page' : undefined}
+            className={
+              filter === key
+                ? 'rounded-md bg-background px-3 py-1.5 text-sm font-medium shadow-sm'
+                : 'rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground'
+            }
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
+            {label}
           </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+        ))}
+      </nav>
+
+      <JobList jobs={jobs} />
+
+      <p className="mt-6 text-xs text-muted-foreground">
+        Your verdicts are the labelled set. Once a few dozen are in, compare them against the
+        ranking to see whether the weights in <code className="font-mono">lib/jev/score.ts</code>{' '}
+        and the wording in <code className="font-mono">profile/targets.md</code> need tuning.
+      </p>
+    </main>
   );
 }
