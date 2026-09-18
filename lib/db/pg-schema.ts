@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
   doublePrecision,
@@ -8,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
 /**
@@ -90,7 +92,10 @@ export const jobs = pgTable(
   ],
 );
 
-/** What you did about a scored job, so the open list can stop showing it. */
+/**
+ * User-set "not interested". The only verdict written today is `ignored`.
+ * Applied used to live here as a local toggle; that column is no longer written.
+ */
 export const labels = pgTable('labels', {
   url: text('url').primaryKey(),
   verdict: text('verdict').notNull(),
@@ -98,6 +103,46 @@ export const labels = pgTable('labels', {
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One row per Apply click. The unique partial index is the lock: two in-flight
+ * attempts for the same posting cannot coexist, which is what makes a double
+ * click safe without a transaction (neon-http is one statement per round trip).
+ */
+export const applyAttempts = pgTable(
+  'apply_attempts',
+  {
+    id: text('id').primaryKey(),
+    jobUrl: text('job_url').notNull(),
+    status: text('status').notNull(),
+    detail: text('detail'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('apply_attempts_job_url_idx').on(t.jobUrl),
+    uniqueIndex('apply_attempts_one_applying_idx')
+      .on(t.jobUrl)
+      .where(sql`${t.status} = 'applying'`),
+  ],
+);
+
+/**
+ * Current apply pointer for a posting. The dashboard joins this; the ledger
+ * above keeps earlier retries. Callback matching is "attemptId === this row".
+ */
+export const applies = pgTable(
+  'applies',
+  {
+    url: text('url').primaryKey(),
+    attemptId: text('attempt_id').notNull(),
+    status: text('status').notNull(),
+    detail: text('detail'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [index('applies_status_idx').on(t.status)],
+);
 
 /** One row per stage run, so cost and volume are auditable. */
 export const runs = pgTable(
@@ -115,3 +160,5 @@ export const runs = pgTable(
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
 export type Label = typeof labels.$inferSelect;
+export type ApplyAttempt = typeof applyAttempts.$inferSelect;
+export type Apply = typeof applies.$inferSelect;

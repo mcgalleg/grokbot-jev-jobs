@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { AlertTriangle, Check, Minus } from 'lucide-react';
+import { AlertTriangle, Check, Loader2, Minus, RotateCw, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -9,8 +9,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { ScoreMeter } from '@/components/score-meter';
-import { setVerdict } from '@/app/actions';
-import type { Verdict } from '@/lib/verdicts';
+import { requestApply, setIgnored } from '@/app/actions';
+import { canStartApply, type ApplyStatus } from '@/lib/apply';
 import { formatSalary } from '@/lib/format';
 import type { ScoredJob } from '@/lib/queries';
 
@@ -44,14 +44,21 @@ const COMPONENT_MAX: Record<string, number> = {
   skills: 3, seniority: 2, building: 1.5, customerFacing: 1.5, aiNative: 1, domain: 1,
 };
 
+const APPLY_LABEL: Record<ApplyStatus, string> = {
+  applying: 'Applying',
+  applied: 'Applied',
+  failed: 'Failed',
+  blocked: 'Blocked',
+  skipped: 'Skipped',
+};
+
 /**
  * Column widths, shared by the header and every row.
  *
  * The list is a flex layout rather than a <table> because each row carries
  * controls and a dialog, but the columns still have to line up under their
  * labels, so the widths live in one place. The trailing width is the action
- * group measured: Why (w-16) + gap-2 + two w-24 buttons with gap-1 between
- * them.
+ * group measured: Why (w-16) + gap-2 + optional status badge + Apply + Ignore.
  */
 const COL = {
   fit: 'w-[126px] shrink-0',
@@ -125,42 +132,144 @@ function Breakdown({ job }: { job: ScoredJob }) {
   );
 }
 
-function VerdictButtons({ job }: { job: ScoredJob }) {
-  const [pending, start] = useTransition();
-  const [local, setLocal] = useState(job.verdict);
+function ApplyStatusBadge({
+  status,
+  detail,
+}: {
+  status: ApplyStatus | null;
+  detail: string | null;
+}) {
+  if (!status) return null;
+  const title = detail ? `${APPLY_LABEL[status]}: ${detail}` : APPLY_LABEL[status];
+  if (status === 'applying') {
+    return (
+      <Badge variant="secondary" className="shrink-0 gap-1" title={title}>
+        <Loader2 className="size-3 animate-spin" />
+        Applying
+      </Badge>
+    );
+  }
+  if (status === 'applied') {
+    return (
+      <Badge variant="secondary" className="shrink-0 gap-1" title={title}>
+        <Check className="size-3" />
+        Applied
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant={status === 'skipped' ? 'secondary' : 'destructive'}
+      className="shrink-0"
+      title={title}
+    >
+      {APPLY_LABEL[status]}
+    </Badge>
+  );
+}
 
-  const click = (v: Verdict) => {
-    const next = local === v ? null : v;
-    setLocal(next);
-    start(() => {
-      void setVerdict(job.url, next);
+function ApplyControls({
+  job,
+  applyStatus,
+  applyDetail,
+  setApplyStatus,
+  setApplyDetail,
+}: {
+  job: ScoredJob;
+  applyStatus: ApplyStatus | null;
+  applyDetail: string | null;
+  setApplyStatus: (status: ApplyStatus | null) => void;
+  setApplyDetail: (detail: string | null) => void;
+}) {
+  const [pending, start] = useTransition();
+  const [ignored, setLocalIgnored] = useState(job.ignored);
+
+  const applying = applyStatus === 'applying';
+  const applied = applyStatus === 'applied';
+  const retryable = canStartApply(applyStatus);
+
+  const onApply = () => {
+    if (!retryable) return;
+    setApplyStatus('applying');
+    start(async () => {
+      const result = await requestApply(job.url);
+      if (result.ok) {
+        setApplyStatus('applying');
+        setApplyDetail(null);
+        return;
+      }
+      if (result.code === 'already-applying') {
+        setApplyStatus('applying');
+        return;
+      }
+      if (result.code === 'already-applied') {
+        setApplyStatus('applied');
+        return;
+      }
+      setApplyStatus(result.status ?? 'failed');
+      setApplyDetail(result.message);
     });
   };
 
-  // Two buttons, so they can afford words. Both toggle: pressing the one that
-  // is already set clears it and the row comes back to the open list.
-  const options: { v: Verdict; icon: typeof Check; label: string }[] = [
-    { v: 'applied', icon: Check, label: 'Applied' },
-    { v: 'ignored', icon: Minus, label: 'Ignore' },
-  ];
+  const onIgnore = () => {
+    const next = !ignored;
+    setLocalIgnored(next);
+    start(() => {
+      void setIgnored(job.url, next);
+    });
+  };
+
+  const statusTitle = applyDetail
+    ? `${APPLY_LABEL[applyStatus ?? 'failed']}: ${applyDetail}`
+    : applyStatus
+      ? APPLY_LABEL[applyStatus]
+      : 'Ask Resume Rudy to submit the universal CV and cover';
 
   return (
-    <div className="flex items-center gap-1">
-      {options.map(({ v, icon: Icon, label }) => (
+    <div className="flex items-center justify-end gap-1">
+      {applied ? (
+        <Button size="sm" variant="default" disabled className="w-24" title="Rudy reported this as submitted">
+          <Check className="size-3.5" />
+          Applied
+        </Button>
+      ) : applying ? (
         <Button
-          key={v}
           size="sm"
-          variant={local === v ? 'default' : 'ghost'}
+          variant="default"
+          disabled
+          aria-busy="true"
+          className="w-24"
+          title="Waiting for Resume Rudy to write back"
+        >
+          <Loader2 className="size-3.5 animate-spin" />
+          Applying
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant={applyStatus ? 'outline' : 'default'}
           disabled={pending}
-          onClick={() => click(v)}
-          aria-pressed={local === v}
-          title={local === v ? `${label} — press again to undo` : label}
+          onClick={onApply}
+          title={statusTitle}
           className="w-24"
         >
-          <Icon className="size-3.5" />
-          {label}
+          {applyStatus ? <RotateCw className="size-3.5" /> : <Send className="size-3.5" />}
+          {applyStatus ? 'Retry' : 'Apply'}
         </Button>
-      ))}
+      )}
+
+      <Button
+        size="sm"
+        variant={ignored ? 'default' : 'ghost'}
+        disabled={pending}
+        onClick={onIgnore}
+        aria-pressed={ignored}
+        title={ignored ? 'Ignored — press again to show on Open' : 'Not interested'}
+        className="w-24"
+      >
+        <Minus className="size-3.5" />
+        Ignore
+      </Button>
     </div>
   );
 }
@@ -178,99 +287,110 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
   return (
     <div className="divide-y rounded-lg border">
       <Header />
-      {jobs.map((job) => {
-        const salary = formatSalary(job.salary);
-        return (
-          <div key={job.url} className="flex items-center gap-4 px-4 py-3">
-            <div className={COL.fit}>
-              <ScoreMeter
-                value={job.fitScore}
-                muted={job.verdict === 'ignored'}
-              />
-            </div>
+      {jobs.map((job) => (
+        <JobRow key={job.url} job={job} />
+      ))}
+    </div>
+  );
+}
 
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                {/* The title is the link to the posting. */}
-                <a
-                  href={job.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={job.title}
-                  className="truncate font-medium underline-offset-4 hover:underline"
-                >
-                  {job.title}
-                </a>
-                {job.blockerP > 0.5 ? (
-                  // Status never rides on color alone: icon plus a written label.
-                  <Badge variant="destructive" className="shrink-0 gap-1">
-                    <AlertTriangle className="size-3" />
-                    Blocker
-                  </Badge>
-                ) : null}
-                {job.compBelowFloorP > 0.5 ? (
-                  <Badge variant="destructive" className="shrink-0 gap-1">
-                    <AlertTriangle className="size-3" />
-                    Under floor
-                  </Badge>
-                ) : null}
-              </div>
-              <div className="truncate text-sm text-muted-foreground">
+function JobRow({ job }: { job: ScoredJob }) {
+  const [applyStatus, setApplyStatus] = useState(job.applyStatus);
+  const [applyDetail, setApplyDetail] = useState(job.applyDetail);
+  const salary = formatSalary(job.salary);
+
+  return (
+    <div className="flex items-center gap-4 px-4 py-3">
+      <div className={COL.fit}>
+        <ScoreMeter value={job.fitScore} muted={job.ignored} />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          {/* The title is the link to the posting. */}
+          <a
+            href={job.url}
+            target="_blank"
+            rel="noreferrer"
+            title={job.title}
+            className="truncate font-medium underline-offset-4 hover:underline"
+          >
+            {job.title}
+          </a>
+          {job.blockerP > 0.5 ? (
+            // Status never rides on color alone: icon plus a written label.
+            <Badge variant="destructive" className="shrink-0 gap-1">
+              <AlertTriangle className="size-3" />
+              Blocker
+            </Badge>
+          ) : null}
+          {job.compBelowFloorP > 0.5 ? (
+            <Badge variant="destructive" className="shrink-0 gap-1">
+              <AlertTriangle className="size-3" />
+              Under floor
+            </Badge>
+          ) : null}
+          <ApplyStatusBadge status={applyStatus} detail={applyDetail} />
+        </div>
+        <div className="truncate text-sm text-muted-foreground">
+          {job.company}
+          {job.location ? ` · ${job.location}` : ''}
+          {/* Below sm the salary and posted columns are hidden, so carry both here. */}
+          <span className="sm:hidden">
+            {salary ? ` · ${salary.label}` : ''}
+            {job.posted ? ` · ${job.posted.label}` : ''}
+          </span>
+        </div>
+      </div>
+
+      <div className={COL.role}>
+        <Badge variant="secondary" className="max-w-full truncate">
+          {ROLE_LABEL[job.role] ?? job.role}
+        </Badge>
+      </div>
+
+      <span
+        className={`${COL.salary} text-sm tabular-nums ${salary ? 'text-foreground' : 'text-muted-foreground'}`}
+        title={salary?.title ?? 'The aggregator has no market estimate for this posting'}
+      >
+        {salary?.label ?? '—'}
+      </span>
+
+      <span
+        className={`${COL.posted} text-sm whitespace-nowrap text-muted-foreground`}
+        title={job.posted?.title ?? 'No date in the feed for this posting'}
+      >
+        {job.posted?.label ?? '—'}
+      </span>
+
+      <div className={`${COL.actions} flex items-center justify-end gap-2`}>
+        <Dialog>
+          <DialogTrigger
+            render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
+          >
+            Why
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="pr-8">{job.title}</DialogTitle>
+              <DialogDescription>
                 {job.company}
-                {job.location ? ` · ${job.location}` : ''}
-                {/* Below sm the salary and posted columns are hidden, so carry both here. */}
-                <span className="sm:hidden">
-                  {salary ? ` · ${salary.label}` : ''}
-                  {job.posted ? ` · ${job.posted.label}` : ''}
-                </span>
-              </div>
-            </div>
+                {job.location ? ` · ${job.location}` : ''} · scored{' '}
+                {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
+              </DialogDescription>
+            </DialogHeader>
+            <Breakdown job={job} />
+          </DialogContent>
+        </Dialog>
 
-            <div className={COL.role}>
-              <Badge variant="secondary" className="max-w-full truncate">
-                {ROLE_LABEL[job.role] ?? job.role}
-              </Badge>
-            </div>
-
-            <span
-              className={`${COL.salary} text-sm tabular-nums ${salary ? 'text-foreground' : 'text-muted-foreground'}`}
-              title={salary?.title ?? 'The aggregator has no market estimate for this posting'}
-            >
-              {salary?.label ?? '—'}
-            </span>
-
-            <span
-              className={`${COL.posted} text-sm whitespace-nowrap text-muted-foreground`}
-              title={job.posted?.title ?? 'No date in the feed for this posting'}
-            >
-              {job.posted?.label ?? '—'}
-            </span>
-
-            <div className={`${COL.actions} flex items-center justify-end gap-2`}>
-              <Dialog>
-                <DialogTrigger
-                  render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
-                >
-                  Why
-                </DialogTrigger>
-                <DialogContent className="max-w-2xl">
-                  <DialogHeader>
-                    <DialogTitle className="pr-8">{job.title}</DialogTitle>
-                    <DialogDescription>
-                      {job.company}
-                      {job.location ? ` · ${job.location}` : ''} · scored{' '}
-                      {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
-                    </DialogDescription>
-                  </DialogHeader>
-                  <Breakdown job={job} />
-                </DialogContent>
-              </Dialog>
-
-              <VerdictButtons job={job} />
-            </div>
-          </div>
-        );
-      })}
+        <ApplyControls
+          job={job}
+          applyStatus={applyStatus}
+          applyDetail={applyDetail}
+          setApplyStatus={setApplyStatus}
+          setApplyDetail={setApplyDetail}
+        />
+      </div>
     </div>
   );
 }

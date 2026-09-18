@@ -1,37 +1,20 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
-import { eq } from 'drizzle-orm';
-import { getDb } from '@/lib/db/pg';
-import { labels } from '@/lib/db/pg-schema';
-import { VERDICTS, type Verdict } from '@/lib/verdicts';
+import { requestApply as startApply, setIgnored as writeIgnored } from '@/lib/apply-server';
 
 /**
- * Mark what you did about a posting, so it leaves the open list.
- *
- * Writes to Neon, which is the only home for these — you press these buttons on
- * the deployed dashboard, so keeping a second copy in local SQLite would
- * diverge immediately.
- *
- * The deployment is guarded by Vercel Authentication, so every request that
- * reaches here is already you. Opening it up to anyone else would need an
- * ownership check on this row first.
+ * Start an automated application. Creates an attempt, sets status to
+ * `applying`, POSTs the universal CV + cover paths to Resume Rudy, and
+ * returns. Applied is set later, only if Rudy writes back success.
  */
-export async function setVerdict(url: string, verdict: Verdict | null) {
-  if (!url) throw new Error('url is required');
-  if (verdict !== null && !VERDICTS.includes(verdict)) throw new Error(`bad verdict: ${verdict}`);
+export async function requestApply(url: string) {
+  return startApply(url);
+}
 
-  const db = getDb();
-  if (verdict === null) {
-    await db.delete(labels).where(eq(labels.url, url));
-  } else {
-    await db
-      .insert(labels)
-      .values({ url, verdict })
-      .onConflictDoUpdate({
-        target: labels.url,
-        set: { verdict },
-      });
-  }
-  revalidatePath('/');
+/**
+ * Mark a posting as not interesting, or clear that mark. Toggle only —
+ * this does not talk to Rudy and does not change apply state.
+ */
+export async function setIgnored(url: string, ignored: boolean) {
+  await writeIgnored(url, ignored);
 }

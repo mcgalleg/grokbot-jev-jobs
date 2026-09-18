@@ -1,11 +1,8 @@
 /**
- * What you did about a posting. Not a judgement of jev's score — we take that
- * at face value — just a record of which rows you have dealt with, so the list
- * can stop showing them.
+ * The only user-set label left. Applied is not a label — it is a write-back
+ * from Resume Rudy, see lib/apply.ts.
  *
- * These live here rather than in app/actions.ts because a file with the
- * 'use server' directive may only export async functions. Exporting this array
- * from there type-checks and builds, then throws at runtime.
+ * Lives here rather than in app/actions.ts because a file with the
+ * 'use server' directive may only export async functions.
  */
-export const VERDICTS = ['applied', 'ignored'] as const;
-export type Verdict = (typeof VERDICTS)[number];
+export const IGNORED = 'ignored' as const;
