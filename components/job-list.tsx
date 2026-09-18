@@ -58,7 +58,6 @@ const COL = {
   role: 'hidden w-28 shrink-0 sm:block',
   salary: 'hidden w-16 shrink-0 text-right sm:block',
   posted: 'hidden w-20 shrink-0 text-right md:block',
-  conf: 'hidden w-16 shrink-0 text-right lg:block',
   actions: 'w-[252px] shrink-0',
 } as const;
 
@@ -72,9 +71,6 @@ function Header() {
         Salary
       </span>
       <span className={COL.posted}>Posted</span>
-      <span className={COL.conf} title="Mean of jev's per-question confidence">
-        Conf
-      </span>
       <span className={`${COL.actions} text-right`}>Verdict</span>
     </div>
   );
@@ -238,13 +234,6 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
               title={job.posted?.title ?? 'No date in the feed for this posting'}
             >
               {job.posted?.label ?? '—'}
-            </span>
-
-            <span
-              className={`${COL.conf} text-xs tabular-nums text-muted-foreground`}
-              title="Mean of jev's per-question confidence"
-            >
-              {job.fitConfidence.toFixed(2)}
             </span>
 
             <div className={`${COL.actions} flex items-center justify-end gap-2`}>
