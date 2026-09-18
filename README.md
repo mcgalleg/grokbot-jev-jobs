@@ -19,7 +19,7 @@ postings that survived the cheap work.
 |---|---|---|---|
 | 0. Ingest | deterministic code | ~1.46M postings from the feed | 5.6% |
 | 1. Triage | jev, title only | title, company, location | 10.3% |
-| 2. Describe | ATS APIs | survivors only | ~68% (rest expired) |
+| 2. Describe | ATS APIs | survivors only | 65% (rest expired or unsupported) |
 | 3. Score | jev, full text | resume + targets + description | all |
 
 **Stage 0** applies only hard facts: location, and the recruiter flag. Anything
@@ -80,9 +80,24 @@ vercel env pull .env.local      # DATABASE_URL, AI_GATEWAY_API_KEY, CRON_SECRET
 pnpm check:jev                  # one live call: confirms the key, prints latency + cost
 ```
 
-The three secrets live only in Vercel project settings and in `.env.local`, which
-is git-ignored. `CRON_SECRET` is what the scheduled run authenticates with;
-Vercel sends it automatically as a bearer token.
+Secrets live only in Vercel project settings and in `.env.local`, which is
+git-ignored. `vercel env pull` brings down the Neon URL, `CRON_SECRET` and the
+profile, so a fresh clone with access to the project is ready to run.
+
+### Two ways to reach the AI Gateway, two budgets
+
+Worth knowing, because it is easy to think one budget covers everything:
+
+| Where | Authenticates with | Budget |
+|---|---|---|
+| Local CLI | `AI_GATEWAY_API_KEY` from `.env.local` | `api-key jev-job-search-poc`, $25/mo |
+| The deployment | `VERCEL_OIDC_TOKEN`, injected automatically | `project jev-job-search`, $25/mo |
+
+`AI_GATEWAY_API_KEY` is deliberately **not** in the Vercel project environment —
+a deployed function does not need it, and a long-lived key in the environment is
+worse than an OIDC token that Vercel mints per deployment. The consequence is that
+the api-key budget does not cap the nightly run; the project budget is what does.
+Both are set, and `vercel ai-gateway budgets ls` shows them side by side.
 
 A one-off `scripts/migrate-to-neon.mts` and the SQLite layer under `lib/db/index.ts`
 remain from the move off local storage. Nothing in the running system uses them —
@@ -104,6 +119,11 @@ edit the markdown; the deployment reads the env vars, because a build from GitHu
 never sees git-ignored files. `profile/` is in `.vercelignore` so that a CLI deploy
 and a git deploy behave identically — otherwise only one of the two paths would
 ever be exercised.
+
+A fresh clone therefore does **not** need the markdown files: `vercel env pull`
+brings the profile down from the project, and the pipeline runs off the env vars.
+Write the files only if you want to edit a profile, or if you have no access to
+the Vercel project.
 
 **After editing any of the three, push them up:**
 
@@ -143,8 +163,16 @@ nothing to sync.
 `pnpm describe` is not called `pnpm fetch` because `pnpm fetch` is a built-in
 pnpm command. `pnpm publish` and `pnpm deploy` are taken for the same reason.
 
-Every script writes a row to the `runs` table with token counts and cost, so
-spend is auditable without opening the Vercel dashboard.
+Every stage writes a row to the `runs` table with token counts and cost, so spend
+is auditable without opening the Vercel dashboard. `pnpm report` reads that table;
+it does not add to it.
+
+Two diagnostics, neither of which touches pipeline state:
+
+```bash
+pnpm check:jev    # one live gateway call: confirms the key, prints latency and cost
+pnpm check:ats    # fetches a few real postings from each wired ATS, plus URL parsing
+```
 
 ## Tuning it
 
@@ -169,7 +197,8 @@ The first full pass, September 2026:
 | Expired before we could read them | 2,508 |
 | On an ATS with no fetcher | 315 |
 | Scored | 5,442, mean 2.48, max 7.91 |
-| Total jev spend | $2.90 |
+| Scoring 6.0 or above | **160** |
+| Total jev spend | $2.91 |
 
 ## Measuring whether it works
 
@@ -197,14 +226,19 @@ Vercel Cron (15:00 UTC daily)
 The backfill was 81k postings and took about an hour. A *daily* run is not that,
 and the difference is the whole design:
 
-| | measured |
+| | |
 |---|---|
-| Full feed scan (59 chunks, 73MB gzipped) | **39s** |
-| Postings with `first_seen` in the last 24h | ~31,000 feed-wide |
-| Surviving the stage 0 location screen | **~1,750/day** |
-| Surviving triage, so needing a description and a score | **~190/day** |
-| Wall clock | **~5 min** against an 800s ceiling |
-| Cost | **~$0.15/day** |
+| Full feed scan (59 chunks, 73MB gzipped) | **13s** on Vercel, 39s locally — measured |
+| A whole cron pass with nothing new to do | **12.8–14.3s** — measured |
+| Postings with `first_seen` in the last 24h | ~31,000 feed-wide — measured |
+| Surviving the stage 0 location screen | ~1,750/day — projected |
+| Surviving triage, so needing a description and a score | ~190/day — projected |
+| Wall clock on a normal day | ~5 min against an 800s ceiling — projected |
+| Cost | ~$0.15/day — projected |
+
+The measured rows are from real runs; the projected ones scale the first full pass
+by the observed daily intake and have not yet been seen on a live day, because the
+upstream feed had not refreshed while this was being built.
 
 800s is generally available on Pro. Every stage gets a share of the remaining
 budget and stops cleanly when it runs out; because each one selects only
@@ -216,14 +250,18 @@ the next run continues where it left off.
 The feed republishes all ~1.4M postings every day. `first_seen` is what makes the
 daily run cheap: the ingest skips anything first seen before the last successful
 run, less an hour of slack for clock skew. That turns ~81,000 upserts into
-~1,750. `--full` forces a complete scan.
+~1,750.
+
+The window is a cron concern, not a CLI one. `GET /api/cron/pipeline?full=1`
+overrides it for a recovery run; from the CLI, `pnpm ingest` scans everything by
+default and `--since <iso>` narrows it.
 
 Cron delivery is best effort and can miss or duplicate a run, so every stage is
 idempotent and reconciliation-based: the window is always "since the last
 successful ingest", never "since yesterday", so a missed night is picked up the
 following one.
 
-### Two things that were verified rather than assumed
+### Three things that were verified rather than assumed
 
 - **ATS fetching works from a datacenter IP.** Workday 403s aggressively and was
   the main risk to running this on Vercel at all. Twelve live postings across
@@ -236,6 +274,12 @@ following one.
   invocations are exempt and arrive carrying the `CRON_SECRET` bearer token.
   `/api/cron/probe` runs nightly and records a row in `runs` purely so that this
   stays observable if the setting ever changes.
+- **The profile reaches the function.** `lib/profile.ts` is read inside triage and
+  score, so a deployment without it fails on the first posting it judges and not
+  a moment earlier — which is exactly how it got shipped once. Confirmed on a
+  build made from GitHub, with `profile/` absent from both the repo and the
+  bundle: the probe reports all three parts sourced from `env`, and a live triage
+  of three postings returned zero errors.
 
 ### Deploying
 
