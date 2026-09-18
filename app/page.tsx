@@ -2,7 +2,7 @@ import { StatTiles } from '@/components/stat-tiles';
 import { JobList } from '@/components/job-list';
 import { getFunnel, getJobs, LIST_LIMIT, STRONG_THRESHOLD, type JobFilter } from '@/lib/queries';
 
-// Counts and verdicts change on every button press, so never serve a cached page.
+// Counts and apply state change on every button press, so never serve a cached page.
 export const dynamic = 'force-dynamic';
 
 export default async function Page({
@@ -91,8 +91,9 @@ export default async function Page({
       ) : null}
 
       <p className="mt-6 text-xs text-muted-foreground">
-        Applied and Ignore only clear a row off this list — nothing is sent anywhere. If the
-        ranking itself looks wrong, the lever is the wording in{' '}
+        Apply asks Resume Rudy to submit the universal CV and cover; Applied is set only when
+        that write-back succeeds. Ignore means not interested and hides the row from Open. If
+        the ranking itself looks wrong, the lever is the wording in{' '}
         <code className="font-mono">profile/targets.md</code>, then a rescore.
       </p>
     </main>

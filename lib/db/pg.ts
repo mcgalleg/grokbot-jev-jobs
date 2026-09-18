@@ -111,6 +111,9 @@ export async function migrate(): Promise<void> {
       note TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`;
+  // Applied is no longer a local label. Rows written by the old toggle come
+  // back to Open so they can go through Resume Rudy; Ignore is unchanged.
+  await sql`DELETE FROM labels WHERE verdict = 'applied'`;
   await sql`
     CREATE TABLE IF NOT EXISTS runs (
       id SERIAL PRIMARY KEY,
@@ -120,6 +123,38 @@ export async function migrate(): Promise<void> {
       stats JSONB
     )`;
   await sql`CREATE INDEX IF NOT EXISTS runs_kind_idx ON runs(kind, finished_at)`;
+  await ensureApplySchema();
+}
+
+/**
+ * Apply ledger + current pointer. Called from migrate() and from the write
+ * paths, so the first Apply after deploy does not wait for tonight's cron.
+ */
+export async function ensureApplySchema(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    CREATE TABLE IF NOT EXISTS apply_attempts (
+      id TEXT PRIMARY KEY,
+      job_url TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detail TEXT,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      completed_at TIMESTAMPTZ
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS apply_attempts_job_url_idx ON apply_attempts(job_url)`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS apply_attempts_one_applying_idx
+    ON apply_attempts(job_url) WHERE status = 'applying'`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS applies (
+      url TEXT PRIMARY KEY,
+      attempt_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detail TEXT,
+      requested_at TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS applies_status_idx ON applies(status)`;
 }
 
 /** Record a finished stage run. Cost and volume stay auditable without the Vercel dashboard. */

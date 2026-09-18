@@ -76,13 +76,45 @@ them as errors would bury the real ones in the nightly summary.
 ```bash
 pnpm install
 vercel link
-vercel env pull .env.local      # DATABASE_URL, AI_GATEWAY_API_KEY, CRON_SECRET
+vercel env pull .env.local      # DATABASE_URL, AI_GATEWAY_API_KEY, CRON_SECRET, Rudy apply secrets
 pnpm check:jev                  # one live call: confirms the key, prints latency + cost
 ```
 
 Secrets live only in Vercel project settings and in `.env.local`, which is
 git-ignored. `vercel env pull` brings down the Neon URL, `CRON_SECRET` and the
-profile, so a fresh clone with access to the project is ready to run.
+profile, so a fresh clone with access to the project is ready to run. See
+`.env.example` for the full list, including the Resume Rudy apply webhook.
+
+### Resume Rudy apply webhook
+
+Apply on the dashboard starts an automated application. The app POSTs a JSON
+payload to Resume Rudy and waits for a secret-gated write-back before anything
+is marked Applied.
+
+| Env var | Direction | What it is |
+|---|---|---|
+| `RUDY_APPLY_WEBHOOK_URL` | outbound | Where Apply POSTs the request |
+| `RUDY_APPLY_WEBHOOK_SECRET` | outbound | `Authorization: Bearer …` on that POST |
+| `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send to `/api/webhooks/rudy-apply` |
+| `APP_BASE_URL` | outbound | Preferred public origin used to build `callbackUrl` |
+
+`callbackUrl` is derived in this order: `APP_BASE_URL`, then
+`NEXT_PUBLIC_APP_URL`, then `https://$VERCEL_URL` (injected on Vercel), then
+`http://localhost:3000`. Set `APP_BASE_URL` in production so Rudy writes back
+to the stable host, not a per-deployment URL.
+
+The dashboard is behind **Vercel Authentication**, so Rudy cannot present a
+session cookie. `/api/webhooks/rudy-apply` is gated by `RUDY_CALLBACK_SECRET`
+instead (`Authorization: Bearer` or `x-rudy-secret`). To get past Vercel
+Authentication itself, set `VERCEL_AUTOMATION_BYPASS_SECRET`; the payload's
+`callbackUrl` then includes `?x-vercel-protection-bypass=…`. Rudy can also send
+that value as the `x-vercel-protection-bypass` header.
+
+Every apply uses the same two files on Mike's machine — there is no
+per-company cover letter:
+
+- Resume: `/home/mike/Projects/jev-job-search/output/mike-gallegos-cv.pdf`
+- Cover: `/home/mike/Projects/jev-job-search/output/universal-cover-letter.pdf`
 
 ### Two ways to reach the AI Gateway, two budgets
 
@@ -215,10 +247,17 @@ rather than from jev:
 
 ### Working the list
 
-**Applied** and **Ignore** write to the `labels` table and do nothing else — no
-application is submitted anywhere. Their only job is to take a row off the
-**Open** tab so tomorrow's list is the postings you have not dealt with. Both
-toggle: press the one already set and the row comes back.
+**Apply** starts an automated application. The server creates an attempt, sets
+the posting to `applying`, POSTs to Resume Rudy (`RUDY_APPLY_WEBHOOK_URL`) with
+the universal CV and cover paths, and returns. The row shows **Applying** until
+Rudy POSTs `/api/webhooks/rudy-apply` with the matching `attemptId`.
+
+Only that write-back may set **Applied**. There is no manual Applied toggle.
+Failed, blocked, and skipped stay on **Open** with a Retry button; a second
+Apply is refused while status is `applying`.
+
+**Ignore** is still a local "not interested" mark. It hides the row from
+**Open** and toggles clear. It does not talk to Rudy.
 
 The score is taken at face value. There is deliberately no thumbs up/down and no
 agreement metric — grading jev's ranking against your own is a bigger project
@@ -323,7 +362,10 @@ as environment variables rather than as files in the repo.
 
 **Vercel Authentication** on `all` deployments: the dashboard is tied to your
 Vercel account, with no auth code in the app and no shared password. External
-requests get a 302, including to the cron path. `.vercelignore` keeps `output/`,
+requests get a 302, including to the cron path. Cron is exempt and carries
+`CRON_SECRET`. Resume Rudy's write-back is not a session: it uses
+`RUDY_CALLBACK_SECRET` plus, when needed, the Vercel automation bypass (see
+"Resume Rudy apply webhook" above). `.vercelignore` keeps `output/`,
 `profile/` and `data/` out of the build context.
 
 ## Stack

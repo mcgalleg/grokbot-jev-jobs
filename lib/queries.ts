@@ -1,8 +1,10 @@
 import 'server-only';
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
+import { isApplyStatus, type ApplyStatus } from './apply';
+import { IGNORED } from './verdicts';
 import { getDb, hasDatabase } from './db/pg';
 import { formatPosted, type SalaryEstimate } from './format';
-import { jobs, labels, runs } from './db/pg-schema';
+import { applies, jobs, labels, runs } from './db/pg-schema';
 
 export interface ScoredJob {
   url: string;
@@ -21,16 +23,19 @@ export interface ScoredJob {
   /** Pre-rendered so the client never recomputes a relative date. See lib/format.ts. */
   posted: { label: string; title: string } | null;
   descriptionChars: number | null;
-  verdict: string | null;
+  ignored: boolean;
+  applyStatus: ApplyStatus | null;
+  applyDetail: string | null;
+  applyAttemptId: string | null;
 }
 
 export interface Funnel {
   stages: Record<string, number>;
   scored: number;
   strong: number;
-  /** Rows you marked Applied. */
+  /** Rows Rudy reported as applied. */
   applied: number;
-  /** Rows you marked either way, so they have left the open list. */
+  /** Ignored, or applied — they have left the open list. */
   handled: number;
   /** Rows the pipeline still owes work on. Zero in the healthy case. */
   pending: number;
@@ -87,11 +92,12 @@ export async function getFunnel(): Promise<Funnel> {
       .select({
         scored: sql<number>`count(*) filter (where ${jobs.stage} = 'scored')::int`,
         strong: sql<number>`count(*) filter (where ${jobs.fitScore} >= ${STRONG_THRESHOLD})::int`,
-        applied: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.verdict} = 'applied')::int`,
-        handled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is not null)::int`,
+        applied: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${applies.status} = 'applied')::int`,
+        handled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and (${labels.verdict} = ${IGNORED} or ${applies.status} = 'applied'))::int`,
       })
       .from(jobs)
-      .leftJoin(labels, eq(labels.url, jobs.url)),
+      .leftJoin(labels, eq(labels.url, jobs.url))
+      .leftJoin(applies, eq(applies.url, jobs.url)),
     db.select({ total: sql<number>`coalesce(sum((${runs.stats}->>'cost')::float8), 0)` }).from(runs),
     db
       .select({ at: sql<string | null>`max(${runs.finishedAt})::text` })
@@ -124,11 +130,13 @@ export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): P
 
   // The table now holds every stage, so scored-only is part of each filter.
   const scored = eq(jobs.stage, 'scored');
+  const notIgnored = or(isNull(labels.url), ne(labels.verdict, IGNORED));
+  const notApplied = or(isNull(applies.url), ne(applies.status, 'applied'));
   const where = {
-    // Applied and Ignored both leave the open list; only Applied has its own tab,
-    // because an ignored posting is one you never want to see again.
-    open: and(scored, isNull(labels.url)),
-    applied: and(scored, eq(labels.verdict, 'applied')),
+    // Ignore and a successful Rudy write-back leave Open. Applying / failed /
+    // blocked / skipped stay here so a retry is one click.
+    open: and(scored, notIgnored, notApplied),
+    applied: and(scored, eq(applies.status, 'applied')),
     all: scored,
   }[filter];
 
@@ -148,9 +156,13 @@ export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): P
       firstSeen: jobs.firstSeen,
       descriptionChars: jobs.descriptionChars,
       verdict: labels.verdict,
+      applyStatus: applies.status,
+      applyDetail: applies.detail,
+      applyAttemptId: applies.attemptId,
     })
     .from(jobs)
     .leftJoin(labels, eq(labels.url, jobs.url))
+    .leftJoin(applies, eq(applies.url, jobs.url))
     .where(where)
     .orderBy(desc(jobs.fitScore))
     .limit(limit);
@@ -178,7 +190,10 @@ export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): P
       salary: (r.salary ?? null) as SalaryEstimate | null,
       posted: formatPosted(r.postedAt, r.firstSeen, now),
       descriptionChars: r.descriptionChars,
-      verdict: r.verdict,
+      ignored: r.verdict === IGNORED,
+      applyStatus: r.applyStatus && isApplyStatus(r.applyStatus) ? r.applyStatus : null,
+      applyDetail: r.applyDetail,
+      applyAttemptId: r.applyAttemptId,
     };
   });
 }
