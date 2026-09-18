@@ -130,9 +130,9 @@ export async function migrate(): Promise<void> {
 /**
  * Apply ledger + current pointer.
  *
- * Called from migrate(), the apply write/callback paths, and the homepage
- * list/funnel reads. CREATE IF NOT EXISTS is cached after the first success in
- * this process so listing jobs does not pay DDL on every render.
+ * Called from migrate(), the apply write/callback paths, and a missing-table
+ * retry on homepage reads. CREATE IF NOT EXISTS is cached after the first
+ * success in this process. The Apply poll path does not run DDL.
  */
 let applySchemaReady: Promise<void> | null = null;
 
@@ -144,6 +144,15 @@ export async function ensureApplySchema(): Promise<void> {
     });
   }
   return applySchemaReady;
+}
+
+/** Neon/Postgres `42P01` — relation does not exist. */
+export function isUndefinedTable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = 'code' in error ? String(error.code) : '';
+  if (code === '42P01') return true;
+  const message = 'message' in error ? String(error.message) : '';
+  return /relation ["'].+["'] does not exist/i.test(message);
 }
 
 async function createApplySchema(): Promise<void> {

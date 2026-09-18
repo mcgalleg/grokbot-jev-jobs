@@ -123,11 +123,12 @@ unset ──Apply──► applying ──callback──► applied | failed | b
 4. Before Submit, Rudy can `GET /api/webhooks/rudy-apply?attemptId=` or
    `?jobUrl=` with the same Bearer secret and read `{ status, detail, attemptId }`.
    Abort if the attempt is already terminal.
-5. The client polls while status is `applying` (~2.5s). The button shows a
-   single **Applying** spinner — no second spinner on the row. `blocked`,
-   `failed`, and `skipped` keep the row on **Open** with **Retry**, and a short
-   plain-language `detail` under the title (knock-out reason, webhook error,
-   skip reason). `applied` is terminal.
+5. The list polls every in-flight Apply in one `getApplyStatuses` read
+   (~2.5s) and refreshes the route only when a pointer leaves `applying`.
+   The button shows a single **Applying** spinner — no second spinner on the
+   row. `blocked`, `failed`, and `skipped` keep the row on **Open** with
+   **Retry**, and a short plain-language `detail` under the title (knock-out
+   reason, webhook error, skip reason). `applied` is terminal.
 
 A second Apply while status is `applying` is refused. `ensureApplySchema()`
 creates the Neon tables on read and write, so a fresh database does not 500:

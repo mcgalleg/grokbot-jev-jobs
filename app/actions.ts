@@ -3,9 +3,11 @@
 import { connection } from 'next/server';
 import {
   readApplyStatus,
+  readApplyStatuses,
   requestApply as startApply,
   setIgnored as writeIgnored,
 } from '@/lib/apply-server';
+import { getJobBreakdown as readJobBreakdown } from '@/lib/queries';
 
 /**
  * Start an automated application. Creates an attempt, sets status to
@@ -34,4 +36,19 @@ export async function setIgnored(url: string, ignored: boolean) {
 export async function getApplyStatus(url: string) {
   await connection();
   return readApplyStatus(url);
+}
+
+/**
+ * One read for every in-flight Apply. The list polls this instead of N
+ * per-row actions so a burst of Applies cannot stampede `/`.
+ */
+export async function getApplyStatuses(urls: string[]) {
+  await connection();
+  return readApplyStatuses(urls);
+}
+
+/** Score breakdown for the Why dialog. Loaded on open, not on every list row. */
+export async function getJobBreakdown(url: string) {
+  await connection();
+  return readJobBreakdown(url);
 }

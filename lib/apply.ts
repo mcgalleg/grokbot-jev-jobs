@@ -89,6 +89,8 @@ export function shouldShowApplyStatusBadge(
   return status != null && status !== 'applying';
 }
 
+export type ApplyPointer = { status: ApplyStatus | null; detail: string | null };
+
 export type ApplyPollTick =
   | { action: 'continue' }
   | { action: 'settle'; status: ApplyStatus | null; detail: string | null };
@@ -97,12 +99,38 @@ export type ApplyPollTick =
  * A poll result that should stop the in-flight spinner and refresh the list.
  * `null` means the apply pointer is gone — also stop spinning.
  */
-export function decideApplyPollTick(next: {
-  status: ApplyStatus | null;
-  detail: string | null;
-}): ApplyPollTick {
+export function decideApplyPollTick(next: ApplyPointer): ApplyPollTick {
   if (next.status === 'applying') return { action: 'continue' };
   return { action: 'settle', status: next.status, detail: next.detail };
+}
+
+/** URLs whose merged pointer is still `applying`, in stable order. */
+export function applyingUrls(items: readonly { url: string; status: ApplyStatus | null }[]): string[] {
+  return items.filter((item) => item.status === 'applying').map((item) => item.url);
+}
+
+export type ApplyPollBatch =
+  | { action: 'continue' }
+  | { action: 'settle'; settled: Record<string, ApplyPointer> };
+
+/**
+ * One list-level poll over every in-flight Apply.
+ *
+ * A missing / null pointer is *not* a settle: the click may have flipped the
+ * row to `applying` before Rudy (or even our insert) has written the row.
+ * Only a real terminal status stops the spinner.
+ */
+export function decideApplyPollBatch(
+  urls: readonly string[],
+  next: Record<string, ApplyPointer>,
+): ApplyPollBatch {
+  const settled: Record<string, ApplyPointer> = {};
+  for (const url of urls) {
+    const pointer = next[url];
+    if (!pointer || pointer.status == null || pointer.status === 'applying') continue;
+    settled[url] = pointer;
+  }
+  return Object.keys(settled).length === 0 ? { action: 'continue' } : { action: 'settle', settled };
 }
 
 export function webhookAts(ats: string | null | undefined): WebhookAts | null {
