@@ -29,7 +29,10 @@ export interface Funnel {
   stages: Record<string, number>;
   scored: number;
   strong: number;
-  unlabeled: number;
+  /** How many YOU have given a verdict to. Nothing to do with pipeline state. */
+  labeled: number;
+  /** Rows the pipeline still owes work on. Zero in the healthy case. */
+  pending: number;
   spendUsd: number;
   lastIngest: string | null;
 }
@@ -37,11 +40,18 @@ export interface Funnel {
 /** Fit score at or above this reads as a real candidate match. */
 export const STRONG_THRESHOLD = 6;
 
+/**
+ * Stages the nightly cron still has work to do on. Everything else is terminal:
+ * scored, triage_reject, expired, unsupported and error are all final answers.
+ */
+const PENDING_STAGES = ['new', 'triaged', 'fetched'] as const;
+
 const EMPTY_FUNNEL: Funnel = {
   stages: {},
   scored: 0,
   strong: 0,
-  unlabeled: 0,
+  labeled: 0,
+  pending: 0,
   spendUsd: 0,
   lastIngest: null,
 };
@@ -65,7 +75,7 @@ export async function getFunnel(): Promise<Funnel> {
       .select({
         scored: sql<number>`count(*) filter (where ${jobs.stage} = 'scored')::int`,
         strong: sql<number>`count(*) filter (where ${jobs.fitScore} >= ${STRONG_THRESHOLD})::int`,
-        unlabeled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is null)::int`,
+        labeled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is not null)::int`,
       })
       .from(jobs)
       .leftJoin(labels, eq(labels.url, jobs.url)),
@@ -76,12 +86,17 @@ export async function getFunnel(): Promise<Funnel> {
       .where(eq(runs.kind, 'ingest')),
   ]);
 
-  const row = counts[0] ?? { scored: 0, strong: 0, unlabeled: 0 };
+  const row = counts[0] ?? { scored: 0, strong: 0, labeled: 0 };
+  const stages = Object.fromEntries(stageRows.map((r) => [r.stage, r.n]));
+  // Every stage that is not terminal: the pipeline owes these rows more work.
+  const pending = PENDING_STAGES.reduce((n, stage) => n + (stages[stage] ?? 0), 0);
+
   return {
-    stages: Object.fromEntries(stageRows.map((r) => [r.stage, r.n])),
+    stages,
     scored: row.scored,
     strong: row.strong,
-    unlabeled: row.unlabeled,
+    labeled: row.labeled,
+    pending,
     spendUsd: Number(spend[0]?.total ?? 0),
     lastIngest: lastIngest[0]?.at ?? null,
   };

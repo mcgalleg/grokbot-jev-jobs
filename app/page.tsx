@@ -23,7 +23,13 @@ export default async function Page({
       value: funnel.strong.toLocaleString(),
       hint: 'worth a real look',
     },
-    { label: 'Awaiting review', value: funnel.unlabeled.toLocaleString(), hint: 'no verdict yet' },
+    {
+      // Named for whose job it is. "Awaiting review" read as pipeline backlog
+      // sitting beside three pipeline counters, which is exactly what it is not.
+      label: 'Labelled by you',
+      value: funnel.labeled.toLocaleString(),
+      hint: `of ${funnel.scored.toLocaleString()} scored`,
+    },
     {
       label: 'Jev spend',
       value: `$${funnel.spendUsd.toFixed(3)}`,
@@ -39,6 +45,10 @@ export default async function Page({
           Postings from the public aggregator feed, screened in code, triaged and scored by
           TypeSafe&nbsp;jev through the Vercel AI Gateway.
           {funnel.lastIngest ? ` Last ingest ${funnel.lastIngest.slice(0, 16).replace('T', ' ')}.` : ''}
+          {/* The only place the page says anything about pipeline backlog. */}
+          {funnel.pending > 0
+            ? ` ${funnel.pending.toLocaleString()} still queued for processing.`
+            : ' Nothing queued for processing.'}
         </p>
       </header>
 
