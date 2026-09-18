@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { startTransition, useEffect, useState, useTransition } from 'react';
 import { AlertTriangle, Check, Loader2, Minus, RotateCw, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,29 +65,26 @@ function useApplyProgress(url: string, initial: { status: ApplyStatus | null; de
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
 
-    const poll = async () => {
-      try {
-        const next = await getApplyStatus(url);
-        if (cancelled) return;
-        if (next.status !== 'applying') {
-          setApplyStatus(next.status);
-          setApplyDetail(next.detail);
-          return;
-        }
-      } catch {
-        // Keep the in-flight badge; the next tick retries.
-      }
-      if (!cancelled) {
-        timeoutId = setTimeout(() => {
-          void poll();
-        }, APPLY_STATUS_POLL_MS);
-      }
+    const schedule = () => {
+      timeoutId = setTimeout(() => {
+        startTransition(async () => {
+          try {
+            const next = await getApplyStatus(url);
+            if (cancelled) return;
+            if (next.status !== 'applying') {
+              setApplyStatus(next.status);
+              setApplyDetail(next.detail);
+              return;
+            }
+          } catch {
+            // Keep the in-flight badge; the next tick retries.
+          }
+          if (!cancelled) schedule();
+        });
+      }, APPLY_STATUS_POLL_MS);
     };
 
-    timeoutId = setTimeout(() => {
-      void poll();
-    }, APPLY_STATUS_POLL_MS);
-
+    schedule();
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
