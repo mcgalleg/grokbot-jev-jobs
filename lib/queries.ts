@@ -1,6 +1,7 @@
 import 'server-only';
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { getDb, hasDatabase } from './db/pg';
+import { formatPosted, type SalaryEstimate } from './format';
 import { jobs, labels, runs } from './db/pg-schema';
 
 export interface ScoredJob {
@@ -16,7 +17,9 @@ export interface ScoredJob {
   role: string;
   components: Record<string, number>;
   answers: Record<string, { type: string; choice?: string; score?: number; probability?: number }>;
-  salary: { p25?: number; median?: number; p75?: number; n?: number } | null;
+  salary: SalaryEstimate | null;
+  /** Pre-rendered so the client never recomputes a relative date. See lib/format.ts. */
+  posted: { label: string; title: string } | null;
   descriptionChars: number | null;
   verdict: string | null;
   note: string | null;
@@ -110,6 +113,8 @@ export async function getJobs(filter: JobFilter = 'top', limit = 100): Promise<S
       blockerP: jobs.blockerP,
       scoreJson: jobs.scoreJson,
       salary: jobs.salary,
+      postedAt: jobs.postedAt,
+      firstSeen: jobs.firstSeen,
       descriptionChars: jobs.descriptionChars,
       verdict: labels.verdict,
       note: labels.note,
@@ -119,6 +124,10 @@ export async function getJobs(filter: JobFilter = 'top', limit = 100): Promise<S
     .where(where)
     .orderBy(desc(jobs.fitScore))
     .limit(limit);
+
+  // One clock reading for the whole page, so two rows a millisecond apart
+  // can never land on different sides of a day boundary.
+  const now = Date.now();
 
   return rows.map((r) => {
     const score = (r.scoreJson ?? {}) as ScoreJson;
@@ -136,7 +145,8 @@ export async function getJobs(filter: JobFilter = 'top', limit = 100): Promise<S
       role: answers.role?.choice ?? 'unknown',
       components: score.components ?? {},
       answers,
-      salary: (r.salary ?? null) as ScoredJob['salary'],
+      salary: (r.salary ?? null) as SalaryEstimate | null,
+      posted: formatPosted(r.postedAt, r.firstSeen, now),
       descriptionChars: r.descriptionChars,
       verdict: r.verdict,
       note: r.note,

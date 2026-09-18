@@ -200,6 +200,19 @@ The first full pass, September 2026:
 | Scoring 6.0 or above | **160** |
 | Total jev spend | $2.91 |
 
+## Reading the dashboard
+
+One row per scored posting, ranked by fit. Two of the columns come from the feed
+rather than from jev:
+
+- **Salary** is the aggregator's market estimate for that title and location, not
+  the pay the posting states, and only about a fifth of rows have one — hence the
+  `~` and the tooltip. The floor in `targets.md` is judged by jev from the
+  description itself, and that verdict shows as the **Under floor** badge.
+- **Posted** is the job board's own `updated_at` where the feed carries it, and
+  otherwise the date the aggregator first saw the posting, which is an upper bound
+  on its age. The tooltip says which of the two you are looking at.
+
 ## Measuring whether it works
 
 The dashboard's thumbs up and down write to the `labels` table. That labelled

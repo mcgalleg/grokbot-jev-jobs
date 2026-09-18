@@ -11,6 +11,7 @@ import {
 import { ScoreMeter } from '@/components/score-meter';
 import { setVerdict } from '@/app/actions';
 import type { Verdict } from '@/lib/verdicts';
+import { formatSalary } from '@/lib/format';
 import type { ScoredJob } from '@/lib/queries';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -42,6 +43,42 @@ const ANSWER_LABEL: Record<string, string> = {
 const COMPONENT_MAX: Record<string, number> = {
   skills: 3, seniority: 2, building: 1.5, customerFacing: 1.5, aiNative: 1, domain: 1,
 };
+
+/**
+ * Column widths, shared by the header and every row.
+ *
+ * The list is a flex layout rather than a <table> because each row carries
+ * controls and a dialog, but the columns still have to line up under their
+ * labels, so the widths live in one place. The trailing width is the action
+ * group measured: Why (w-16) + gap + link (size-8) + gap + four size-8 verdict
+ * buttons with gap-1 between them.
+ */
+const COL = {
+  fit: 'w-[126px] shrink-0',
+  role: 'hidden w-28 shrink-0 sm:block',
+  salary: 'hidden w-16 shrink-0 text-right sm:block',
+  posted: 'hidden w-20 shrink-0 text-right md:block',
+  conf: 'hidden w-16 shrink-0 text-right lg:block',
+  actions: 'w-[252px] shrink-0',
+} as const;
+
+function Header() {
+  return (
+    <div className="flex items-center gap-4 border-b px-4 py-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+      <span className={COL.fit}>Fit</span>
+      <span className="min-w-0 flex-1">Role</span>
+      <span className={COL.role}>Type</span>
+      <span className={COL.salary} title="Market estimate from the aggregator, not stated pay">
+        Salary
+      </span>
+      <span className={COL.posted}>Posted</span>
+      <span className={COL.conf} title="Mean of jev's per-question confidence">
+        Conf
+      </span>
+      <span className={`${COL.actions} text-right`}>Verdict</span>
+    </div>
+  );
+}
 
 function Breakdown({ job }: { job: ScoredJob }) {
   const entries = Object.entries(job.components);
@@ -143,78 +180,110 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
 
   return (
     <div className="divide-y rounded-lg border">
-      {jobs.map((job) => (
-        <div key={job.url} className="flex items-center gap-4 px-4 py-3">
-          <ScoreMeter value={job.fitScore} muted={job.verdict === 'bad' || job.verdict === 'ignored'} />
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-medium">{job.title}</span>
-              {job.blockerP > 0.5 ? (
-                // Status never rides on color alone: icon plus a written label.
-                <Badge variant="destructive" className="shrink-0 gap-1">
-                  <AlertTriangle className="size-3" />
-                  Blocker
-                </Badge>
-              ) : null}
-              {job.compBelowFloorP > 0.5 ? (
-                <Badge variant="destructive" className="shrink-0 gap-1">
-                  <AlertTriangle className="size-3" />
-                  Under floor
-                </Badge>
-              ) : null}
+      <Header />
+      {jobs.map((job) => {
+        const salary = formatSalary(job.salary);
+        return (
+          <div key={job.url} className="flex items-center gap-4 px-4 py-3">
+            <div className={COL.fit}>
+              <ScoreMeter
+                value={job.fitScore}
+                muted={job.verdict === 'bad' || job.verdict === 'ignored'}
+              />
             </div>
-            <div className="truncate text-sm text-muted-foreground">
-              {job.company}
-              {job.location ? ` · ${job.location}` : ''}
-              {job.salary?.median ? ` · ~$${Math.round(job.salary.median / 1000)}k median` : ''}
+
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-medium">{job.title}</span>
+                {job.blockerP > 0.5 ? (
+                  // Status never rides on color alone: icon plus a written label.
+                  <Badge variant="destructive" className="shrink-0 gap-1">
+                    <AlertTriangle className="size-3" />
+                    Blocker
+                  </Badge>
+                ) : null}
+                {job.compBelowFloorP > 0.5 ? (
+                  <Badge variant="destructive" className="shrink-0 gap-1">
+                    <AlertTriangle className="size-3" />
+                    Under floor
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="truncate text-sm text-muted-foreground">
+                {job.company}
+                {job.location ? ` · ${job.location}` : ''}
+                {/* Below sm the salary and posted columns are hidden, so carry both here. */}
+                <span className="sm:hidden">
+                  {salary ? ` · ${salary.label}` : ''}
+                  {job.posted ? ` · ${job.posted.label}` : ''}
+                </span>
+              </div>
+            </div>
+
+            <div className={COL.role}>
+              <Badge variant="secondary" className="max-w-full truncate">
+                {ROLE_LABEL[job.role] ?? job.role}
+              </Badge>
+            </div>
+
+            <span
+              className={`${COL.salary} text-sm tabular-nums ${salary ? 'text-foreground' : 'text-muted-foreground'}`}
+              title={salary?.title ?? 'The aggregator has no market estimate for this posting'}
+            >
+              {salary?.label ?? '—'}
+            </span>
+
+            <span
+              className={`${COL.posted} text-sm whitespace-nowrap text-muted-foreground`}
+              title={job.posted?.title ?? 'No date in the feed for this posting'}
+            >
+              {job.posted?.label ?? '—'}
+            </span>
+
+            <span
+              className={`${COL.conf} text-xs tabular-nums text-muted-foreground`}
+              title="Mean of jev's per-question confidence"
+            >
+              {job.fitConfidence.toFixed(2)}
+            </span>
+
+            <div className={`${COL.actions} flex items-center justify-end gap-2`}>
+              <Dialog>
+                <DialogTrigger
+                  render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
+                >
+                  Why
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle className="pr-8">{job.title}</DialogTitle>
+                    <DialogDescription>
+                      {job.company}
+                      {job.location ? ` · ${job.location}` : ''} · scored{' '}
+                      {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <Breakdown job={job} />
+                </DialogContent>
+              </Dialog>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0"
+                nativeButton={false}
+                render={
+                  <a href={job.url} target="_blank" rel="noreferrer" aria-label="Open posting" />
+                }
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+
+              <VerdictButtons job={job} />
             </div>
           </div>
-
-          <Badge variant="secondary" className="hidden shrink-0 sm:inline-flex">
-            {ROLE_LABEL[job.role] ?? job.role}
-          </Badge>
-          <span
-            className="hidden w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground md:inline"
-            title="Mean of jev's per-question confidence"
-          >
-            conf {job.fitConfidence.toFixed(2)}
-          </span>
-
-          <Dialog>
-            <DialogTrigger
-              render={<Button variant="outline" size="sm" className="shrink-0" />}
-            >
-              Why
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle className="pr-8">{job.title}</DialogTitle>
-                <DialogDescription>
-                  {job.company}
-                  {job.location ? ` · ${job.location}` : ''} · scored{' '}
-                  {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
-                </DialogDescription>
-              </DialogHeader>
-              <Breakdown job={job} />
-            </DialogContent>
-          </Dialog>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            nativeButton={false}
-            render={
-              <a href={job.url} target="_blank" rel="noreferrer" aria-label="Open posting" />
-            }
-          >
-            <ExternalLink className="size-4" />
-          </Button>
-
-          <VerdictButtons job={job} />
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
