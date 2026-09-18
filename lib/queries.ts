@@ -46,6 +46,16 @@ export const STRONG_THRESHOLD = 6;
  */
 const PENDING_STAGES = ['new', 'triaged', 'fetched'] as const;
 
+/**
+ * How many rows the list renders.
+ *
+ * It is a page-weight cap, not a quality bar — the list is ordered by score, so
+ * it cuts from the bottom. It has to stay comfortably above the strong count or
+ * the "Strong (6+)" tile promises rows the list will not show: at 150 the cut
+ * landed at 6.02 and ten strong matches were unreachable.
+ */
+export const LIST_LIMIT = 400;
+
 const EMPTY_FUNNEL: Funnel = {
   stages: {},
   scored: 0,
@@ -104,7 +114,7 @@ export async function getFunnel(): Promise<Funnel> {
 
 export type JobFilter = 'top' | 'all' | 'labeled';
 
-export async function getJobs(filter: JobFilter = 'top', limit = 100): Promise<ScoredJob[]> {
+export async function getJobs(filter: JobFilter = 'top', limit = LIST_LIMIT): Promise<ScoredJob[]> {
   if (!hasDatabase()) return [];
   const db = getDb();
 
