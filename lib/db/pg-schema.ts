@@ -90,7 +90,7 @@ export const jobs = pgTable(
   ],
 );
 
-/** Your verdict on a scored job. This is the labelled set that tells you if jev is right. */
+/** What you did about a scored job, so the open list can stop showing it. */
 export const labels = pgTable('labels', {
   url: text('url').primaryKey(),
   verdict: text('verdict').notNull(),

@@ -213,12 +213,21 @@ rather than from jev:
   otherwise the date the aggregator first saw the posting, which is an upper bound
   on its age. The tooltip says which of the two you are looking at.
 
-## Measuring whether it works
+### Working the list
 
-The dashboard's thumbs up and down write to the `labels` table. That labelled
-set is the point of the exercise: once a few dozen verdicts are in, compare them
-against the ranking. If jev's top twenty and your top twenty disagree, the fix
-is almost always the wording in `targets.md`, not the weights.
+**Applied** and **Ignore** write to the `labels` table and do nothing else — no
+application is submitted anywhere. Their only job is to take a row off the
+**Open** tab so tomorrow's list is the postings you have not dealt with. Both
+toggle: press the one already set and the row comes back.
+
+The score is taken at face value. There is deliberately no thumbs up/down and no
+agreement metric — grading jev's ranking against your own is a bigger project
+than this is, and the tool is only useful if reading it is cheaper than reading
+the job boards. If the ranking does look wrong, the lever is the wording in
+`targets.md` followed by a rescore, not a weight in `lib/jev/score.ts`.
+
+The list renders the 400 highest-scoring rows for a tab and says so when it has
+cut; the cap only has to stay clear of the strong count.
 
 ## Deployment
 

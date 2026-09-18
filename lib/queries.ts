@@ -1,5 +1,5 @@
 import 'server-only';
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb, hasDatabase } from './db/pg';
 import { formatPosted, type SalaryEstimate } from './format';
 import { jobs, labels, runs } from './db/pg-schema';
@@ -29,8 +29,10 @@ export interface Funnel {
   stages: Record<string, number>;
   scored: number;
   strong: number;
-  /** How many YOU have given a verdict to. Nothing to do with pipeline state. */
-  labeled: number;
+  /** Rows you marked Applied. */
+  applied: number;
+  /** Rows you marked either way, so they have left the open list. */
+  handled: number;
   /** Rows the pipeline still owes work on. Zero in the healthy case. */
   pending: number;
   spendUsd: number;
@@ -60,7 +62,8 @@ const EMPTY_FUNNEL: Funnel = {
   stages: {},
   scored: 0,
   strong: 0,
-  labeled: 0,
+  applied: 0,
+  handled: 0,
   pending: 0,
   spendUsd: 0,
   lastIngest: null,
@@ -85,7 +88,8 @@ export async function getFunnel(): Promise<Funnel> {
       .select({
         scored: sql<number>`count(*) filter (where ${jobs.stage} = 'scored')::int`,
         strong: sql<number>`count(*) filter (where ${jobs.fitScore} >= ${STRONG_THRESHOLD})::int`,
-        labeled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is not null)::int`,
+        applied: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.verdict} = 'applied')::int`,
+        handled: sql<number>`count(*) filter (where ${jobs.stage} = 'scored' and ${labels.url} is not null)::int`,
       })
       .from(jobs)
       .leftJoin(labels, eq(labels.url, jobs.url)),
@@ -96,7 +100,7 @@ export async function getFunnel(): Promise<Funnel> {
       .where(eq(runs.kind, 'ingest')),
   ]);
 
-  const row = counts[0] ?? { scored: 0, strong: 0, labeled: 0 };
+  const row = counts[0] ?? { scored: 0, strong: 0, applied: 0, handled: 0 };
   const stages = Object.fromEntries(stageRows.map((r) => [r.stage, r.n]));
   // Every stage that is not terminal: the pipeline owes these rows more work.
   const pending = PENDING_STAGES.reduce((n, stage) => n + (stages[stage] ?? 0), 0);
@@ -105,25 +109,28 @@ export async function getFunnel(): Promise<Funnel> {
     stages,
     scored: row.scored,
     strong: row.strong,
-    labeled: row.labeled,
+    applied: row.applied,
+    handled: row.handled,
     pending,
     spendUsd: Number(spend[0]?.total ?? 0),
     lastIngest: lastIngest[0]?.at ?? null,
   };
 }
 
-export type JobFilter = 'top' | 'all' | 'labeled';
+export type JobFilter = 'open' | 'applied' | 'all';
 
-export async function getJobs(filter: JobFilter = 'top', limit = LIST_LIMIT): Promise<ScoredJob[]> {
+export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): Promise<ScoredJob[]> {
   if (!hasDatabase()) return [];
   const db = getDb();
 
   // The table now holds every stage, so scored-only is part of each filter.
   const scored = eq(jobs.stage, 'scored');
   const where = {
-    top: and(scored, isNull(labels.url)),
+    // Applied and Ignored both leave the open list; only Applied has its own tab,
+    // because an ignored posting is one you never want to see again.
+    open: and(scored, isNull(labels.url)),
+    applied: and(scored, eq(labels.verdict, 'applied')),
     all: scored,
-    labeled: and(scored, isNotNull(labels.url)),
   }[filter];
 
   const rows = await db

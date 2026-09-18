@@ -11,17 +11,17 @@ export default async function Page({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const { tab } = await searchParams;
-  const filter: JobFilter = tab === 'all' || tab === 'labeled' ? tab : 'top';
+  const filter: JobFilter = tab === 'all' || tab === 'applied' ? tab : 'open';
 
   const [funnel, jobs] = await Promise.all([getFunnel(), getJobs(filter, LIST_LIMIT)]);
 
   const screened = funnel.stages.triage_reject ?? 0;
   // How many rows this tab matches, before the list cap. All three are already
   // in the funnel, so knowing it costs no extra query.
-  const matching = {
-    top: funnel.scored - funnel.labeled,
+  const matching: number = {
+    open: funnel.scored - funnel.handled,
+    applied: funnel.applied,
     all: funnel.scored,
-    labeled: funnel.labeled,
   }[filter];
   const stats = [
     { label: 'Scored', value: funnel.scored.toLocaleString(), hint: 'full description read' },
@@ -29,15 +29,6 @@ export default async function Page({
       label: `Strong (${STRONG_THRESHOLD}+)`,
       value: funnel.strong.toLocaleString(),
       hint: 'worth a real look',
-    },
-    {
-      // Named for whose job it is. "Awaiting review" read as pipeline backlog
-      // sitting beside three pipeline counters, which is exactly what it is not.
-      label: 'Labelled by you',
-      value: funnel.labeled.toLocaleString(),
-      // Against the strong count, not the scored count: a verdict on a 2.5 is
-      // not a judgement call, and 5,442 is not a target anyone is working toward.
-      hint: `of ${funnel.strong.toLocaleString()} strong`,
     },
     {
       label: 'Jev spend',
@@ -68,9 +59,9 @@ export default async function Page({
       <nav className="mb-4 inline-flex items-center gap-1 rounded-lg bg-muted p-1">
         {(
           [
-            ['top', 'Needs review'],
+            ['open', 'Open'],
+            ['applied', 'Applied'],
             ['all', 'All scored'],
-            ['labeled', 'Labelled'],
           ] as const
         ).map(([key, label]) => (
           <a
@@ -100,9 +91,9 @@ export default async function Page({
       ) : null}
 
       <p className="mt-6 text-xs text-muted-foreground">
-        Your verdicts are the labelled set. Once a few dozen are in, compare them against the
-        ranking to see whether the weights in <code className="font-mono">lib/jev/score.ts</code>{' '}
-        and the wording in <code className="font-mono">profile/targets.md</code> need tuning.
+        Applied and Ignore only clear a row off this list — nothing is sent anywhere. If the
+        ranking itself looks wrong, the lever is the wording in{' '}
+        <code className="font-mono">profile/targets.md</code>, then a rescore.
       </p>
     </main>
   );

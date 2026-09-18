@@ -7,12 +7,11 @@ import { labels } from '@/lib/db/pg-schema';
 import { VERDICTS, type Verdict } from '@/lib/verdicts';
 
 /**
- * Record a verdict on a scored job. These labels are the whole point of the
- * exercise: they are what tells you whether jev's ranking matches yours.
+ * Mark what you did about a posting, so it leaves the open list.
  *
- * Writes to Neon, which is the only home for verdicts — you press these buttons
- * on the deployed dashboard, so keeping a second copy in local SQLite would
- * diverge immediately. `pnpm publish` copies them back down one-way.
+ * Writes to Neon, which is the only home for these — you press these buttons on
+ * the deployed dashboard, so keeping a second copy in local SQLite would
+ * diverge immediately.
  *
  * The deployment is guarded by Vercel Authentication, so every request that
  * reaches here is already you. Opening it up to anyone else would need an

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { AlertTriangle, Check, Minus, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, Check, Minus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -50,15 +50,15 @@ const COMPONENT_MAX: Record<string, number> = {
  * The list is a flex layout rather than a <table> because each row carries
  * controls and a dialog, but the columns still have to line up under their
  * labels, so the widths live in one place. The trailing width is the action
- * group measured: Why (w-16) + gap-2 + four size-8 verdict buttons with gap-1
- * between them.
+ * group measured: Why (w-16) + gap-2 + two w-24 buttons with gap-1 between
+ * them.
  */
 const COL = {
   fit: 'w-[126px] shrink-0',
   role: 'hidden w-28 shrink-0 sm:block',
   salary: 'hidden w-16 shrink-0 text-right sm:block',
   posted: 'hidden w-20 shrink-0 text-right md:block',
-  actions: 'w-[212px] shrink-0',
+  actions: 'w-[268px] shrink-0',
 } as const;
 
 function Header() {
@@ -71,7 +71,7 @@ function Header() {
         Salary
       </span>
       <span className={COL.posted}>Posted</span>
-      <span className={`${COL.actions} text-right`}>Verdict</span>
+      <span className={`${COL.actions} text-right`}>Status</span>
     </div>
   );
 }
@@ -137,9 +137,9 @@ function VerdictButtons({ job }: { job: ScoredJob }) {
     });
   };
 
-  const options: { v: Verdict; icon: typeof ThumbsUp; label: string }[] = [
-    { v: 'good', icon: ThumbsUp, label: 'Good match' },
-    { v: 'bad', icon: ThumbsDown, label: 'Bad match' },
+  // Two buttons, so they can afford words. Both toggle: pressing the one that
+  // is already set clears it and the row comes back to the open list.
+  const options: { v: Verdict; icon: typeof Check; label: string }[] = [
     { v: 'applied', icon: Check, label: 'Applied' },
     { v: 'ignored', icon: Minus, label: 'Ignore' },
   ];
@@ -149,15 +149,16 @@ function VerdictButtons({ job }: { job: ScoredJob }) {
       {options.map(({ v, icon: Icon, label }) => (
         <Button
           key={v}
-          size="icon"
+          size="sm"
           variant={local === v ? 'default' : 'ghost'}
           disabled={pending}
           onClick={() => click(v)}
-          aria-label={label}
-          title={label}
-          className="size-8"
+          aria-pressed={local === v}
+          title={local === v ? `${label} — press again to undo` : label}
+          className="w-24"
         >
-          <Icon className="size-4" />
+          <Icon className="size-3.5" />
+          {label}
         </Button>
       ))}
     </div>
@@ -168,8 +169,8 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
   if (!jobs.length) {
     return (
       <Card className="p-8 text-center text-sm text-muted-foreground">
-        Nothing here yet. Run <code className="font-mono">pnpm pipeline</code> locally to score
-        postings, then <code className="font-mono">pnpm sync</code> to publish them here.
+        Nothing in this tab. The cron scores new postings daily at 15:00 UTC;{' '}
+        <code className="font-mono">pnpm pipeline</code> runs the same thing by hand.
       </Card>
     );
   }
@@ -184,7 +185,7 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
             <div className={COL.fit}>
               <ScoreMeter
                 value={job.fitScore}
-                muted={job.verdict === 'bad' || job.verdict === 'ignored'}
+                muted={job.verdict === 'ignored'}
               />
             </div>
 

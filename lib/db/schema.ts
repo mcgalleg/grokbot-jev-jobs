@@ -73,7 +73,7 @@ export const jobs = sqliteTable(
 /** Your verdict on a scored job. This is the labelled set that tells you if jev is right. */
 export const labels = sqliteTable('labels', {
   url: text('url').primaryKey(),
-  verdict: text('verdict').notNull(), // 'good' | 'bad' | 'applied' | 'ignored'
+  verdict: text('verdict').notNull(), // 'applied' | 'ignored'
   note: text('note'),
   createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
 });
