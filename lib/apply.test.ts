@@ -10,6 +10,8 @@ import {
   callbackSecretFrom,
   decideCallback,
   parseCallbackBody,
+  parseRudyStatusQuery,
+  settleFromStatuses,
   resolveAppBaseUrl,
   secretsMatch,
   UNIVERSAL_COVER_PATH,
@@ -238,14 +240,68 @@ describe('decideCallback', () => {
 
   it('is idempotent on a duplicate terminal', () => {
     assert.deepEqual(decideCallback({ ...base, activeStatus: 'applied' }), { action: 'idempotent' });
+    assert.deepEqual(decideCallback({ ...base, activeStatus: 'blocked', nextStatus: 'blocked' }), {
+      action: 'idempotent',
+    });
   });
 
-  it('refuses a different attempt or a second terminal hop', () => {
+  it('lets a later applied overwrite blocked / failed / skipped for the same attempt', () => {
+    assert.deepEqual(decideCallback({ ...base, activeStatus: 'blocked', nextStatus: 'applied' }), {
+      action: 'accept',
+    });
+    assert.deepEqual(decideCallback({ ...base, activeStatus: 'failed', nextStatus: 'applied' }), {
+      action: 'accept',
+    });
+    assert.deepEqual(decideCallback({ ...base, activeStatus: 'skipped', nextStatus: 'applied' }), {
+      action: 'accept',
+    });
+  });
+
+  it('refuses a lesser terminal overwriting applied, or a sideways hop', () => {
+    assert.equal(decideCallback({ ...base, activeStatus: 'applied', nextStatus: 'blocked' }).action, 'reject');
+    assert.equal(decideCallback({ ...base, activeStatus: 'applied', nextStatus: 'failed' }).action, 'reject');
+    assert.equal(decideCallback({ ...base, activeStatus: 'applied', nextStatus: 'skipped' }).action, 'reject');
+    assert.equal(decideCallback({ ...base, activeStatus: 'blocked', nextStatus: 'failed' }).action, 'reject');
+    assert.equal(decideCallback({ ...base, activeStatus: 'failed', nextStatus: 'skipped' }).action, 'reject');
+  });
+
+  it('refuses a different attempt, a url mismatch, or a missing pointer', () => {
     assert.equal(
       decideCallback({ ...base, attemptId: '22222222-2222-4222-8222-222222222222' }).action,
       'reject',
     );
-    assert.equal(decideCallback({ ...base, activeStatus: 'failed', nextStatus: 'applied' }).action, 'reject');
+    assert.equal(decideCallback({ ...base, jobUrl: 'https://job.example/other' }).action, 'reject');
     assert.equal(decideCallback({ ...base, activeAttemptId: null, activeStatus: null }).action, 'reject');
+  });
+});
+
+describe('settleFromStatuses', () => {
+  it('lets applied correct applying or a lesser terminal, never applied itself', () => {
+    assert.deepEqual(settleFromStatuses('applied'), ['applying', 'blocked', 'failed', 'skipped']);
+    assert.deepEqual(settleFromStatuses('blocked'), ['applying']);
+    assert.deepEqual(settleFromStatuses('failed'), ['applying']);
+    assert.deepEqual(settleFromStatuses('skipped'), ['applying']);
+    assert.equal(settleFromStatuses('applied').includes('applied'), false);
+  });
+});
+
+describe('parseRudyStatusQuery', () => {
+  const attemptId = '11111111-1111-4111-8111-111111111111';
+  const jobUrl = 'https://job.example/1';
+
+  it('accepts attemptId, jobUrl, or both', () => {
+    assert.deepEqual(parseRudyStatusQuery(new URLSearchParams({ attemptId })), { ok: true, attemptId });
+    assert.deepEqual(parseRudyStatusQuery(new URLSearchParams({ jobUrl })), { ok: true, jobUrl });
+    assert.deepEqual(parseRudyStatusQuery(new URLSearchParams({ attemptId, jobUrl })), {
+      ok: true,
+      attemptId,
+      jobUrl,
+    });
+  });
+
+  it('rejects a missing, empty, or malformed query', () => {
+    assert.equal(parseRudyStatusQuery(new URLSearchParams()).ok, false);
+    assert.equal(parseRudyStatusQuery(new URLSearchParams({ attemptId: 'nope' })).ok, false);
+    assert.equal(parseRudyStatusQuery(new URLSearchParams({ jobUrl: 'not-a-url' })).ok, false);
   });
 });
