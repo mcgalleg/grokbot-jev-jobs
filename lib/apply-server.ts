@@ -3,7 +3,7 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
-import { ensureApplySchema, getDb } from '@/lib/db/pg';
+import { ensureApplySchema, getDb, hasDatabase } from '@/lib/db/pg';
 import { applyAttempts, applies, jobs, labels } from '@/lib/db/pg-schema';
 import { IGNORED } from '@/lib/verdicts';
 import {
@@ -14,6 +14,7 @@ import {
   buildApplyRequestPayload,
   canStartApply,
   decideCallback,
+  isApplyStatus,
 } from '@/lib/apply';
 
 const WEBHOOK_TIMEOUT_MS = 8_000;
@@ -158,6 +159,27 @@ export async function requestApply(jobUrl: string): Promise<RequestApplyResult> 
 
   revalidatePath('/');
   return { ok: true, attemptId, status: 'applying' };
+}
+
+export async function readApplyStatus(jobUrl: string): Promise<{
+  status: ApplyStatus | null;
+  detail: string | null;
+}> {
+  if (!jobUrl) throw new Error('url is required');
+  if (!hasDatabase()) return { status: null, detail: null };
+  await ensureApplySchema();
+
+  const db = getDb();
+  const [row] = await db
+    .select({ status: applies.status, detail: applies.detail })
+    .from(applies)
+    .where(eq(applies.url, jobUrl))
+    .limit(1);
+
+  return {
+    status: row?.status && isApplyStatus(row.status) ? row.status : null,
+    detail: row?.detail ?? null,
+  };
 }
 
 export async function setIgnored(jobUrl: string, ignored: boolean): Promise<void> {

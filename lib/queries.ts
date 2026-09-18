@@ -2,7 +2,7 @@ import 'server-only';
 import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { isApplyStatus, type ApplyStatus } from './apply';
 import { IGNORED } from './verdicts';
-import { getDb, hasDatabase } from './db/pg';
+import { ensureApplySchema, getDb, hasDatabase } from './db/pg';
 import { formatPosted, type SalaryEstimate } from './format';
 import { applies, jobs, labels, runs } from './db/pg-schema';
 
@@ -84,6 +84,7 @@ interface ScoreJson {
  */
 export async function getFunnel(): Promise<Funnel> {
   if (!hasDatabase()) return EMPTY_FUNNEL;
+  await ensureApplySchema();
   const db = getDb();
 
   const [stageRows, counts, spend, lastIngest] = await Promise.all([
@@ -126,6 +127,7 @@ export type JobFilter = 'open' | 'applied' | 'all';
 
 export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): Promise<ScoredJob[]> {
   if (!hasDatabase()) return [];
+  await ensureApplySchema();
   const db = getDb();
 
   // The table now holds every stage, so scored-only is part of each filter.

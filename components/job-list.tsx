@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { AlertTriangle, Check, Loader2, Minus, RotateCw, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { ScoreMeter } from '@/components/score-meter';
-import { requestApply, setIgnored } from '@/app/actions';
+import { getApplyStatus, requestApply, setIgnored } from '@/app/actions';
 import { canStartApply, type ApplyStatus } from '@/lib/apply';
 import { formatSalary } from '@/lib/format';
 import type { ScoredJob } from '@/lib/queries';
@@ -51,6 +51,51 @@ const APPLY_LABEL: Record<ApplyStatus, string> = {
   blocked: 'Blocked',
   skipped: 'Skipped',
 };
+
+/** How often a row in `applying` re-reads the server pointer. */
+const APPLY_STATUS_POLL_MS = 2500;
+
+function useApplyProgress(url: string, initial: { status: ApplyStatus | null; detail: string | null }) {
+  const [applyStatus, setApplyStatus] = useState(initial.status);
+  const [applyDetail, setApplyDetail] = useState(initial.detail);
+
+  useEffect(() => {
+    if (applyStatus !== 'applying') return;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        const next = await getApplyStatus(url);
+        if (cancelled) return;
+        if (next.status !== 'applying') {
+          setApplyStatus(next.status);
+          setApplyDetail(next.detail);
+          return;
+        }
+      } catch {
+        // Keep the in-flight badge; the next tick retries.
+      }
+      if (!cancelled) {
+        timeoutId = setTimeout(() => {
+          void poll();
+        }, APPLY_STATUS_POLL_MS);
+      }
+    };
+
+    timeoutId = setTimeout(() => {
+      void poll();
+    }, APPLY_STATUS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [applyStatus, url]);
+
+  return { applyStatus, applyDetail, setApplyStatus, setApplyDetail };
+}
 
 /**
  * Column widths, shared by the header and every row.
@@ -295,8 +340,10 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
 }
 
 function JobRow({ job }: { job: ScoredJob }) {
-  const [applyStatus, setApplyStatus] = useState(job.applyStatus);
-  const [applyDetail, setApplyDetail] = useState(job.applyDetail);
+  const { applyStatus, applyDetail, setApplyStatus, setApplyDetail } = useApplyProgress(
+    job.url,
+    { status: job.applyStatus, detail: job.applyDetail },
+  );
   const salary = formatSalary(job.salary);
 
   return (

@@ -46,10 +46,11 @@ export { pgSchema };
 /**
  * Create the schema if it is missing.
  *
- * Called by the pipeline stages, never on the dashboard's read path — that would
- * spend an HTTP round trip on DDL before every render. Raw SQL rather than
- * drizzle-kit migrations because a three-table schema does not need a migration
- * history, and the cron function should not carry a migration runner.
+ * Called by the pipeline stages. The apply tables are also ensured on the
+ * dashboard read path (see ensureApplySchema) so a fresh database does not 500
+ * the homepage. Raw SQL rather than drizzle-kit migrations because this schema
+ * does not need a migration history, and the cron function should not carry a
+ * migration runner.
  */
 export async function migrate(): Promise<void> {
   const sql = getSql();
@@ -127,10 +128,25 @@ export async function migrate(): Promise<void> {
 }
 
 /**
- * Apply ledger + current pointer. Called from migrate() and from the write
- * paths, so the first Apply after deploy does not wait for tonight's cron.
+ * Apply ledger + current pointer.
+ *
+ * Called from migrate(), the apply write/callback paths, and the homepage
+ * list/funnel reads. CREATE IF NOT EXISTS is cached after the first success in
+ * this process so listing jobs does not pay DDL on every render.
  */
+let applySchemaReady: Promise<void> | null = null;
+
 export async function ensureApplySchema(): Promise<void> {
+  if (!applySchemaReady) {
+    applySchemaReady = createApplySchema().catch((error) => {
+      applySchemaReady = null;
+      throw error;
+    });
+  }
+  return applySchemaReady;
+}
+
+async function createApplySchema(): Promise<void> {
   const sql = getSql();
   await sql`
     CREATE TABLE IF NOT EXISTS apply_attempts (
