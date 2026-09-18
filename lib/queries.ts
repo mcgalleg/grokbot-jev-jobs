@@ -1,33 +1,14 @@
 import 'server-only';
+import { cache } from 'react';
 import { and, desc, eq, isNull, ne, or, sql } from 'drizzle-orm';
-import { isApplyStatus, type ApplyStatus } from './apply';
+import { isApplyStatus } from './apply';
 import { IGNORED } from './verdicts';
-import { ensureApplySchema, getDb, hasDatabase } from './db/pg';
+import { ensureApplySchema, getDb, hasDatabase, isUndefinedTable } from './db/pg';
 import { formatPosted, type SalaryEstimate } from './format';
 import { applies, jobs, labels, runs } from './db/pg-schema';
+import type { JobBreakdown, JobListItem } from './job-view';
 
-export interface ScoredJob {
-  url: string;
-  title: string;
-  company: string;
-  location: string | null;
-  ats: string | null;
-  fitScore: number;
-  fitConfidence: number;
-  blockerP: number;
-  compBelowFloorP: number;
-  role: string;
-  components: Record<string, number>;
-  answers: Record<string, { type: string; choice?: string; score?: number; probability?: number }>;
-  salary: SalaryEstimate | null;
-  /** Pre-rendered so the client never recomputes a relative date. See lib/format.ts. */
-  posted: { label: string; title: string } | null;
-  descriptionChars: number | null;
-  ignored: boolean;
-  applyStatus: ApplyStatus | null;
-  applyDetail: string | null;
-  applyAttemptId: string | null;
-}
+export type { JobAnswer, JobBreakdown, JobListItem } from './job-view';
 
 export interface Funnel {
   stages: Record<string, number>;
@@ -74,17 +55,27 @@ const EMPTY_FUNNEL: Funnel = {
 };
 
 interface ScoreJson {
-  answers?: ScoredJob['answers'];
+  answers?: JobBreakdown['answers'];
   components?: Record<string, number>;
+}
+
+async function withApplySchema<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isUndefinedTable(error)) throw error;
+    await ensureApplySchema();
+    return run();
+  }
 }
 
 /**
  * Counters for the stat tiles. All live — the pipeline and the dashboard share
  * one database, so there is nothing to snapshot.
  */
-export async function getFunnel(): Promise<Funnel> {
+export const getFunnel = cache(async function getFunnel(): Promise<Funnel> {
   if (!hasDatabase()) return EMPTY_FUNNEL;
-  await ensureApplySchema();
+  return withApplySchema(async () => {
   const db = getDb();
 
   const [stageRows, counts, spend, lastIngest] = await Promise.all([
@@ -121,81 +112,94 @@ export async function getFunnel(): Promise<Funnel> {
     spendUsd: Number(spend[0]?.total ?? 0),
     lastIngest: lastIngest[0]?.at ?? null,
   };
-}
+  });
+});
 
 export type JobFilter = 'open' | 'applied' | 'all';
 
-export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): Promise<ScoredJob[]> {
+export const getJobs = cache(async function getJobs(
+  filter: JobFilter = 'open',
+  limit = LIST_LIMIT,
+): Promise<JobListItem[]> {
   if (!hasDatabase()) return [];
-  await ensureApplySchema();
-  const db = getDb();
+  return withApplySchema(async () => {
+    const db = getDb();
 
-  // The table now holds every stage, so scored-only is part of each filter.
-  const scored = eq(jobs.stage, 'scored');
-  const notIgnored = or(isNull(labels.url), ne(labels.verdict, IGNORED));
-  const notApplied = or(isNull(applies.url), ne(applies.status, 'applied'));
-  const where = {
-    // Ignore and a successful Rudy write-back leave Open. Applying / failed /
-    // blocked / skipped stay here so a retry is one click.
-    open: and(scored, notIgnored, notApplied),
-    applied: and(scored, eq(applies.status, 'applied')),
-    all: scored,
-  }[filter];
+    // The table now holds every stage, so scored-only is part of each filter.
+    const scored = eq(jobs.stage, 'scored');
+    const notIgnored = or(isNull(labels.url), ne(labels.verdict, IGNORED));
+    const notApplied = or(isNull(applies.url), ne(applies.status, 'applied'));
+    const where = {
+      // Ignore and a successful Rudy write-back leave Open. Applying / failed /
+      // blocked / skipped stay here so a retry is one click.
+      open: and(scored, notIgnored, notApplied),
+      applied: and(scored, eq(applies.status, 'applied')),
+      all: scored,
+    }[filter];
 
-  const rows = await db
-    .select({
-      url: jobs.url,
-      title: jobs.title,
-      company: jobs.company,
-      location: jobs.location,
-      ats: jobs.ats,
-      fitScore: jobs.fitScore,
-      fitConfidence: jobs.fitConfidence,
-      blockerP: jobs.blockerP,
-      scoreJson: jobs.scoreJson,
-      salary: jobs.salary,
-      postedAt: jobs.postedAt,
-      firstSeen: jobs.firstSeen,
-      descriptionChars: jobs.descriptionChars,
-      verdict: labels.verdict,
-      applyStatus: applies.status,
-      applyDetail: applies.detail,
-      applyAttemptId: applies.attemptId,
-    })
-    .from(jobs)
-    .leftJoin(labels, eq(labels.url, jobs.url))
-    .leftJoin(applies, eq(applies.url, jobs.url))
-    .where(where)
-    .orderBy(desc(jobs.fitScore))
-    .limit(limit);
+    const rows = await db
+      .select({
+        url: jobs.url,
+        title: jobs.title,
+        company: jobs.company,
+        location: jobs.location,
+        fitScore: jobs.fitScore,
+        fitConfidence: jobs.fitConfidence,
+        blockerP: jobs.blockerP,
+        scoreJson: jobs.scoreJson,
+        salary: jobs.salary,
+        postedAt: jobs.postedAt,
+        firstSeen: jobs.firstSeen,
+        verdict: labels.verdict,
+        applyStatus: applies.status,
+        applyDetail: applies.detail,
+      })
+      .from(jobs)
+      .leftJoin(labels, eq(labels.url, jobs.url))
+      .leftJoin(applies, eq(applies.url, jobs.url))
+      .where(where)
+      .orderBy(desc(jobs.fitScore))
+      .limit(limit);
 
-  // One clock reading for the whole page, so two rows a millisecond apart
-  // can never land on different sides of a day boundary.
-  const now = Date.now();
+    // One clock reading for the whole page, so two rows a millisecond apart
+    // can never land on different sides of a day boundary.
+    const now = Date.now();
 
-  return rows.map((r) => {
-    const score = (r.scoreJson ?? {}) as ScoreJson;
-    const answers = score.answers ?? {};
-    return {
-      url: r.url,
-      title: r.title.trim(),
-      company: r.company,
-      location: r.location,
-      ats: r.ats,
-      fitScore: Number(r.fitScore ?? 0),
-      fitConfidence: Number(r.fitConfidence ?? 0),
-      blockerP: Number(r.blockerP ?? 0),
-      compBelowFloorP: Number(answers.compBelowFloor?.probability ?? 0),
-      role: answers.role?.choice ?? 'unknown',
-      components: score.components ?? {},
-      answers,
-      salary: (r.salary ?? null) as SalaryEstimate | null,
-      posted: formatPosted(r.postedAt, r.firstSeen, now),
-      descriptionChars: r.descriptionChars,
-      ignored: r.verdict === IGNORED,
-      applyStatus: r.applyStatus && isApplyStatus(r.applyStatus) ? r.applyStatus : null,
-      applyDetail: r.applyDetail,
-      applyAttemptId: r.applyAttemptId,
-    };
+    return rows.map((r) => {
+      const score = (r.scoreJson ?? {}) as ScoreJson;
+      const answers = score.answers ?? {};
+      return {
+        url: r.url,
+        title: r.title.trim(),
+        company: r.company,
+        location: r.location,
+        fitScore: Number(r.fitScore ?? 0),
+        fitConfidence: Number(r.fitConfidence ?? 0),
+        blockerP: Number(r.blockerP ?? 0),
+        compBelowFloorP: Number(answers.compBelowFloor?.probability ?? 0),
+        role: answers.role?.choice ?? 'unknown',
+        salary: (r.salary ?? null) as SalaryEstimate | null,
+        posted: formatPosted(r.postedAt, r.firstSeen, now),
+        ignored: r.verdict === IGNORED,
+        applyStatus: r.applyStatus && isApplyStatus(r.applyStatus) ? r.applyStatus : null,
+        applyDetail: r.applyDetail,
+      };
+    });
   });
+});
+
+export async function getJobBreakdown(jobUrl: string): Promise<JobBreakdown | null> {
+  if (!jobUrl || !hasDatabase()) return null;
+  const db = getDb();
+  const [row] = await db
+    .select({ scoreJson: jobs.scoreJson })
+    .from(jobs)
+    .where(eq(jobs.url, jobUrl))
+    .limit(1);
+  if (!row) return null;
+  const score = (row.scoreJson ?? {}) as ScoreJson;
+  return {
+    components: score.components ?? {},
+    answers: score.answers ?? {},
+  };
 }

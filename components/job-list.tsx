@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import {
+  startTransition,
+  useEffect,
+  useState,
+  useTransition,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Check, Loader2, Minus, RotateCw, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -10,16 +17,18 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
 import { ScoreMeter } from '@/components/score-meter';
-import { getApplyStatus, requestApply, setIgnored } from '@/app/actions';
+import { getApplyStatuses, getJobBreakdown, requestApply, setIgnored } from '@/app/actions';
 import {
+  applyingUrls,
   canStartApply,
-  decideApplyPollTick,
+  decideApplyPollBatch,
   shouldShowApplyDetail,
   shouldShowApplyStatusBadge,
+  type ApplyPointer,
   type ApplyStatus,
 } from '@/lib/apply';
 import { formatSalary } from '@/lib/format';
-import type { ScoredJob } from '@/lib/queries';
+import type { JobBreakdown, JobListItem } from '@/lib/job-view';
 
 const ROLE_LABEL: Record<string, string> = {
   fde: 'Forward deployed',
@@ -59,46 +68,49 @@ const APPLY_LABEL: Record<ApplyStatus, string> = {
   skipped: 'Skipped',
 };
 
-/** How often a row in `applying` re-reads the server pointer. */
+/** How often the list re-reads every in-flight pointer — one action, not one per row. */
 const APPLY_STATUS_POLL_MS = 2500;
 
-function useApplyProgress(url: string, initial: { status: ApplyStatus | null; detail: string | null }) {
+function mergePointer(job: JobListItem, overrides: Record<string, ApplyPointer>): ApplyPointer {
+  return overrides[job.url] ?? { status: job.applyStatus, detail: job.applyDetail };
+}
+
+/**
+ * One poll loop for the whole list. Per-row timers plus `router.refresh()`
+ * every ~10s (PR #5) re-downloaded a 3 MB homepage and blanked the tab.
+ */
+function useApplyingPoll(
+  jobs: JobListItem[],
+  overrides: Record<string, ApplyPointer>,
+  setOverrides: Dispatch<SetStateAction<Record<string, ApplyPointer>>>,
+) {
   const router = useRouter();
-  const [applyStatus, setApplyStatus] = useState(initial.status);
-  const [applyDetail, setApplyDetail] = useState(initial.detail);
+
+  const urlsKey = applyingUrls(
+    jobs.map((job) => ({ url: job.url, status: mergePointer(job, overrides).status })),
+  ).join('\n');
 
   useEffect(() => {
-    if (applyStatus !== 'applying') return;
+    if (!urlsKey) return;
 
+    const urls = urlsKey.split('\n');
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
-    let failures = 0;
-    let stillApplyingTicks = 0;
 
     const tick = async () => {
       try {
-        const next = await getApplyStatus(url);
+        const next = await getApplyStatuses(urls);
         if (cancelled) return;
-        failures = 0;
-        const decision = decideApplyPollTick(next);
+        const decision = decideApplyPollBatch(urls, next);
         if (decision.action === 'settle') {
-          setApplyStatus(decision.status);
-          setApplyDetail(decision.detail);
+          startTransition(() => {
+            setOverrides((prev) => ({ ...prev, ...decision.settled }));
+          });
           router.refresh();
           return;
         }
-        // Stale `applying` reads still refresh the route so Open/Applied
-        // can drop or move the row even if the pointer action is cached.
-        stillApplyingTicks += 1;
-        if (stillApplyingTicks % 4 === 0) router.refresh();
       } catch {
-        if (cancelled) return;
-        failures += 1;
-        // Status action failed: refresh the list so a write-back still surfaces.
-        if (failures >= 2) {
-          router.refresh();
-          failures = 0;
-        }
+        // Stay on the poll. A failed read must not refresh the 400-row page.
       }
       if (!cancelled) {
         timeoutId = setTimeout(() => {
@@ -115,9 +127,7 @@ function useApplyProgress(url: string, initial: { status: ApplyStatus | null; de
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [applyStatus, url, router]);
-
-  return { applyStatus, applyDetail, setApplyStatus, setApplyDetail };
+  }, [urlsKey, router, setOverrides]);
 }
 
 /**
@@ -151,8 +161,8 @@ function Header() {
   );
 }
 
-function Breakdown({ job }: { job: ScoredJob }) {
-  const entries = Object.entries(job.components);
+function Breakdown({ breakdown }: { breakdown: JobBreakdown }) {
+  const entries = Object.entries(breakdown.components);
   return (
     <div className="space-y-4">
       <div className="space-y-2">
@@ -186,7 +196,7 @@ function Breakdown({ job }: { job: ScoredJob }) {
       <div className="rounded-md border p-3">
         <div className="mb-2 text-xs font-medium text-muted-foreground">Raw answers from jev</div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          {Object.entries(job.answers).map(([key, a]) => (
+          {Object.entries(breakdown.answers).map(([key, a]) => (
             <div key={key} className="flex justify-between gap-2">
               <dt className="text-muted-foreground">{ANSWER_LABEL[key] ?? key}</dt>
               <dd className="tabular-nums">
@@ -197,6 +207,50 @@ function Breakdown({ job }: { job: ScoredJob }) {
         </dl>
       </div>
     </div>
+  );
+}
+
+function WhyDialog({ job }: { job: JobListItem }) {
+  const [breakdown, setBreakdown] = useState<JobBreakdown | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  return (
+    <Dialog
+      onOpenChange={(open) => {
+        if (!open || breakdown || loading) return;
+        setLoading(true);
+        void getJobBreakdown(job.url)
+          .then((next) => {
+            setBreakdown(next);
+          })
+          .finally(() => {
+            setLoading(false);
+          });
+      }}
+    >
+      <DialogTrigger
+        render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
+      >
+        Why
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="pr-8">{job.title}</DialogTitle>
+          <DialogDescription>
+            {job.company}
+            {job.location ? ` · ${job.location}` : ''} · scored{' '}
+            {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
+          </DialogDescription>
+        </DialogHeader>
+        {breakdown ? (
+          <Breakdown breakdown={breakdown} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {loading ? 'Loading the score breakdown…' : 'Open again if the breakdown did not load.'}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -237,14 +291,12 @@ function ApplyControls({
   job,
   applyStatus,
   applyDetail,
-  setApplyStatus,
-  setApplyDetail,
+  onPointer,
 }: {
-  job: ScoredJob;
+  job: JobListItem;
   applyStatus: ApplyStatus | null;
   applyDetail: string | null;
-  setApplyStatus: (status: ApplyStatus | null) => void;
-  setApplyDetail: (detail: string | null) => void;
+  onPointer: (pointer: ApplyPointer) => void;
 }) {
   const [pending, start] = useTransition();
   const [ignored, setLocalIgnored] = useState(job.ignored);
@@ -255,24 +307,22 @@ function ApplyControls({
 
   const onApply = () => {
     if (!retryable) return;
-    setApplyStatus('applying');
+    onPointer({ status: 'applying', detail: null });
     start(async () => {
       const result = await requestApply(job.url);
       if (result.ok) {
-        setApplyStatus('applying');
-        setApplyDetail(null);
+        onPointer({ status: 'applying', detail: null });
         return;
       }
       if (result.code === 'already-applying') {
-        setApplyStatus('applying');
+        onPointer({ status: 'applying', detail: null });
         return;
       }
       if (result.code === 'already-applied') {
-        setApplyStatus('applied');
+        onPointer({ status: 'applied', detail: null });
         return;
       }
-      setApplyStatus(result.status ?? 'failed');
-      setApplyDetail(result.message);
+      onPointer({ status: result.status ?? 'failed', detail: result.message });
     });
   };
 
@@ -339,7 +389,10 @@ function ApplyControls({
   );
 }
 
-export function JobList({ jobs }: { jobs: ScoredJob[] }) {
+export function JobList({ jobs }: { jobs: JobListItem[] }) {
+  const [overrides, setOverrides] = useState<Record<string, ApplyPointer>>({});
+  useApplyingPoll(jobs, overrides, setOverrides);
+
   if (!jobs.length) {
     return (
       <Card className="p-8 text-center text-sm text-muted-foreground">
@@ -353,23 +406,34 @@ export function JobList({ jobs }: { jobs: ScoredJob[] }) {
     <div className="divide-y rounded-lg border">
       <Header />
       {jobs.map((job) => (
-        // Remount when the server pointer changes so a refresh after Rudy
-        // write-back replaces local `applying` without an effect.
-        <JobRow key={`${job.url}:${job.applyStatus ?? 'none'}`} job={job} />
+        <JobRow
+          key={job.url}
+          job={job}
+          pointer={mergePointer(job, overrides)}
+          onPointer={(pointer) => {
+            setOverrides((prev) => ({ ...prev, [job.url]: pointer }));
+          }}
+        />
       ))}
     </div>
   );
 }
 
-function JobRow({ job }: { job: ScoredJob }) {
-  const { applyStatus, applyDetail, setApplyStatus, setApplyDetail } = useApplyProgress(
-    job.url,
-    { status: job.applyStatus, detail: job.applyDetail },
-  );
+function JobRow({
+  job,
+  pointer,
+  onPointer,
+}: {
+  job: JobListItem;
+  pointer: ApplyPointer;
+  onPointer: (pointer: ApplyPointer) => void;
+}) {
+  const applyStatus = pointer.status;
+  const applyDetail = pointer.detail;
   const salary = formatSalary(job.salary);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 [content-visibility:auto] [contain-intrinsic-size:auto_72px]">
       <div className={COL.fit}>
         <ScoreMeter value={job.fitScore} muted={job.ignored} />
       </div>
@@ -438,31 +502,13 @@ function JobRow({ job }: { job: ScoredJob }) {
       </span>
 
       <div className={`${COL.actions} ml-auto flex items-center justify-end gap-2`}>
-        <Dialog>
-          <DialogTrigger
-            render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
-          >
-            Why
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle className="pr-8">{job.title}</DialogTitle>
-              <DialogDescription>
-                {job.company}
-                {job.location ? ` · ${job.location}` : ''} · scored{' '}
-                {job.fitScore.toFixed(2)} / 10 at confidence {job.fitConfidence.toFixed(2)}
-              </DialogDescription>
-            </DialogHeader>
-            <Breakdown job={job} />
-          </DialogContent>
-        </Dialog>
+        <WhyDialog job={job} />
 
         <ApplyControls
           job={job}
           applyStatus={applyStatus}
           applyDetail={applyDetail}
-          setApplyStatus={setApplyStatus}
-          setApplyDetail={setApplyDetail}
+          onPointer={onPointer}
         />
       </div>
     </div>

@@ -162,25 +162,50 @@ export async function requestApply(jobUrl: string): Promise<RequestApplyResult> 
   return { ok: true, attemptId, status: 'applying' };
 }
 
+const APPLY_STATUS_BATCH_LIMIT = 200;
+
 export async function readApplyStatus(jobUrl: string): Promise<{
   status: ApplyStatus | null;
   detail: string | null;
 }> {
   if (!jobUrl) throw new Error('url is required');
-  if (!hasDatabase()) return { status: null, detail: null };
-  await ensureApplySchema();
+  const batch = await readApplyStatuses([jobUrl]);
+  return batch[jobUrl] ?? { status: null, detail: null };
+}
 
-  const db = getDb();
-  const [row] = await db
-    .select({ status: applies.status, detail: applies.detail })
-    .from(applies)
-    .where(eq(applies.url, jobUrl))
-    .limit(1);
+/**
+ * Current pointers for many postings in one query.
+ *
+ * The UI poll path must not run DDL: `ensureApplySchema` is for writes and
+ * for a missing-table retry on the homepage. A failed read returns null
+ * pointers so the spinner stays up instead of 500ing the action.
+ */
+export async function readApplyStatuses(jobUrls: string[]): Promise<
+  Record<string, { status: ApplyStatus | null; detail: string | null }>
+> {
+  const unique = [
+    ...new Set(jobUrls.filter((url) => typeof url === 'string' && url.length > 0)),
+  ].slice(0, APPLY_STATUS_BATCH_LIMIT);
+  const out: Record<string, { status: ApplyStatus | null; detail: string | null }> = {};
+  for (const url of unique) out[url] = { status: null, detail: null };
+  if (!unique.length || !hasDatabase()) return out;
 
-  return {
-    status: row?.status && isApplyStatus(row.status) ? row.status : null,
-    detail: row?.detail ?? null,
-  };
+  try {
+    const db = getDb();
+    const rows = await db
+      .select({ url: applies.url, status: applies.status, detail: applies.detail })
+      .from(applies)
+      .where(inArray(applies.url, unique));
+    for (const row of rows) {
+      out[row.url] = {
+        status: row.status && isApplyStatus(row.status) ? row.status : null,
+        detail: row.detail ?? null,
+      };
+    }
+  } catch {
+    return out;
+  }
+  return out;
 }
 
 export type RudyApplyStatus = {

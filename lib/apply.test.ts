@@ -6,6 +6,8 @@ import {
   canStartApply,
   shouldShowApplyDetail,
   shouldShowApplyStatusBadge,
+  applyingUrls,
+  decideApplyPollBatch,
   decideApplyPollTick,
   callbackSecretFrom,
   decideCallback,
@@ -88,6 +90,54 @@ describe('decideApplyPollTick', () => {
       status: null,
       detail: null,
     });
+  });
+});
+
+describe('applyingUrls', () => {
+  it('keeps applying rows in list order', () => {
+    assert.deepEqual(
+      applyingUrls([
+        { url: 'https://job.example/a', status: 'applying' },
+        { url: 'https://job.example/b', status: 'applied' },
+        { url: 'https://job.example/c', status: 'applying' },
+        { url: 'https://job.example/d', status: null },
+      ]),
+      ['https://job.example/a', 'https://job.example/c'],
+    );
+  });
+});
+
+describe('decideApplyPollBatch', () => {
+  const a = 'https://job.example/a';
+  const b = 'https://job.example/b';
+
+  it('keeps polling while every pointer is still applying or missing', () => {
+    assert.deepEqual(
+      decideApplyPollBatch([a, b], {
+        [a]: { status: 'applying', detail: null },
+        [b]: { status: 'applying', detail: null },
+      }),
+      { action: 'continue' },
+    );
+    assert.deepEqual(decideApplyPollBatch([a], {}), { action: 'continue' });
+    assert.deepEqual(
+      decideApplyPollBatch([a], { [a]: { status: null, detail: null } }),
+      { action: 'continue' },
+    );
+  });
+
+  it('settles only the rows that have a terminal write-back', () => {
+    assert.deepEqual(
+      decideApplyPollBatch([a, b], {
+        [a]: { status: 'applied', detail: null },
+        [b]: { status: 'applying', detail: null },
+      }),
+      { action: 'settle', settled: { [a]: { status: 'applied', detail: null } } },
+    );
+    assert.deepEqual(
+      decideApplyPollBatch([a], { [a]: { status: 'blocked', detail: 'knock-out' } }),
+      { action: 'settle', settled: { [a]: { status: 'blocked', detail: 'knock-out' } } },
+    );
   });
 });
 
