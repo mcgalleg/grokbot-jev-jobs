@@ -237,6 +237,22 @@ following one.
   `/api/cron/probe` runs nightly and records a row in `runs` purely so that this
   stays observable if the setting ever changes.
 
+### Deploying
+
+The Vercel project is connected to `mcgalleg/jev-job-search` (private), production
+branch `master`. Pushing to `master` builds and promotes automatically; branches
+and pull requests get preview deployments.
+
+```bash
+git push                 # code changes
+pnpm profile:push        # profile changes — env vars, not files (see "Your profile")
+vercel deploy --prod     # still works, for a deploy without a commit
+```
+
+The two are not interchangeable in one respect: a code change needs a push, a
+profile change needs `profile:push` *and* a rebuild, because the profile travels
+as environment variables rather than as files in the repo.
+
 ### Access
 
 **Vercel Authentication** on `all` deployments: the dashboard is tied to your
