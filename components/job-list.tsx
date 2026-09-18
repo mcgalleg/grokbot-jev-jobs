@@ -197,20 +197,13 @@ function ApplyStatusBadge({
   }
 
   return (
-    <span className="inline-flex max-w-[min(55%,22rem)] shrink-0 items-center gap-1.5">
-      <Badge
-        variant={status === 'skipped' ? 'secondary' : 'destructive'}
-        className="shrink-0"
-        title={title}
-      >
-        {label}
-      </Badge>
-      {shouldShowApplyDetail(status) && detail ? (
-        <span className="min-w-0 truncate text-xs text-muted-foreground" title={detail}>
-          {detail}
-        </span>
-      ) : null}
-    </span>
+    <Badge
+      variant={status === 'skipped' ? 'secondary' : 'destructive'}
+      className="shrink-0"
+      title={title}
+    >
+      {label}
+    </Badge>
   );
 }
 
@@ -348,12 +341,12 @@ function JobRow({ job }: { job: ScoredJob }) {
   const salary = formatSalary(job.salary);
 
   return (
-    <div className="flex items-center gap-4 px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
       <div className={COL.fit}>
         <ScoreMeter value={job.fitScore} muted={job.ignored} />
       </div>
 
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[16rem] flex-1">
         <div className="flex min-w-0 items-center gap-2">
           {/* The title is the link to the posting. */}
           <a
@@ -380,6 +373,11 @@ function JobRow({ job }: { job: ScoredJob }) {
           ) : null}
           <ApplyStatusBadge status={applyStatus} detail={applyDetail} />
         </div>
+        {shouldShowApplyDetail(applyStatus) && applyDetail ? (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground" title={applyDetail}>
+            {applyDetail}
+          </p>
+        ) : null}
         <div className="truncate text-sm text-muted-foreground">
           {job.company}
           {job.location ? ` · ${job.location}` : ''}
@@ -411,7 +409,7 @@ function JobRow({ job }: { job: ScoredJob }) {
         {job.posted?.label ?? '—'}
       </span>
 
-      <div className={`${COL.actions} flex items-center justify-end gap-2`}>
+      <div className={`${COL.actions} ml-auto flex items-center justify-end gap-2`}>
         <Dialog>
           <DialogTrigger
             render={<Button variant="outline" size="sm" className="w-16 shrink-0" />}
