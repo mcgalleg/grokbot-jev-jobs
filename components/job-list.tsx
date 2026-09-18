@@ -1,6 +1,7 @@
 'use client';
 
-import { startTransition, useEffect, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, Check, Loader2, Minus, RotateCw, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,7 +11,14 @@ import {
 } from '@/components/ui/dialog';
 import { ScoreMeter } from '@/components/score-meter';
 import { getApplyStatus, requestApply, setIgnored } from '@/app/actions';
-import { canStartApply, shouldShowApplyDetail, type ApplyStatus } from '@/lib/apply';
+import {
+  canStartApply,
+  decideApplyPollTick,
+  isTerminalApplyStatus,
+  shouldShowApplyDetail,
+  shouldShowApplyStatusBadge,
+  type ApplyStatus,
+} from '@/lib/apply';
 import { formatSalary } from '@/lib/format';
 import type { ScoredJob } from '@/lib/queries';
 
@@ -56,40 +64,63 @@ const APPLY_LABEL: Record<ApplyStatus, string> = {
 const APPLY_STATUS_POLL_MS = 2500;
 
 function useApplyProgress(url: string, initial: { status: ApplyStatus | null; detail: string | null }) {
+  const router = useRouter();
   const [applyStatus, setApplyStatus] = useState(initial.status);
   const [applyDetail, setApplyDetail] = useState(initial.detail);
+
+  // After router.refresh(), adopt a terminal server pointer. Do not copy
+  // `applying` or null back over an optimistic in-flight click.
+  useEffect(() => {
+    if (initial.status && isTerminalApplyStatus(initial.status)) {
+      setApplyStatus(initial.status);
+      setApplyDetail(initial.detail);
+    }
+  }, [initial.status, initial.detail]);
 
   useEffect(() => {
     if (applyStatus !== 'applying') return;
 
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
+    let failures = 0;
 
-    const schedule = () => {
-      timeoutId = setTimeout(() => {
-        startTransition(async () => {
-          try {
-            const next = await getApplyStatus(url);
-            if (cancelled) return;
-            if (next.status !== 'applying') {
-              setApplyStatus(next.status);
-              setApplyDetail(next.detail);
-              return;
-            }
-          } catch {
-            // Keep the in-flight badge; the next tick retries.
-          }
-          if (!cancelled) schedule();
-        });
-      }, APPLY_STATUS_POLL_MS);
+    const tick = async () => {
+      try {
+        const next = await getApplyStatus(url);
+        if (cancelled) return;
+        failures = 0;
+        const decision = decideApplyPollTick(next);
+        if (decision.action === 'settle') {
+          setApplyStatus(decision.status);
+          setApplyDetail(decision.detail);
+          router.refresh();
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+        failures += 1;
+        // Status action failed: refresh the list so a write-back still surfaces.
+        if (failures >= 2) {
+          router.refresh();
+          failures = 0;
+        }
+      }
+      if (!cancelled) {
+        timeoutId = setTimeout(() => {
+          void tick();
+        }, APPLY_STATUS_POLL_MS);
+      }
     };
 
-    schedule();
+    timeoutId = setTimeout(() => {
+      void tick();
+    }, APPLY_STATUS_POLL_MS);
+
     return () => {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [applyStatus, url]);
+  }, [applyStatus, url, router]);
 
   return { applyStatus, applyDetail, setApplyStatus, setApplyDetail };
 }
@@ -182,7 +213,7 @@ function ApplyStatusBadge({
   detail: string | null;
 }) {
   // Applying is shown only on the Apply button so the row has one spinner.
-  if (!status || status === 'applying') return null;
+  if (!shouldShowApplyStatusBadge(status)) return null;
 
   const label = APPLY_LABEL[status];
   const title = detail ? `${label}: ${detail}` : label;
