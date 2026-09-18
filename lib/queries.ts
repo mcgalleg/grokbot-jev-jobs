@@ -22,7 +22,6 @@ export interface ScoredJob {
   posted: { label: string; title: string } | null;
   descriptionChars: number | null;
   verdict: string | null;
-  note: string | null;
 }
 
 export interface Funnel {
@@ -149,7 +148,6 @@ export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): P
       firstSeen: jobs.firstSeen,
       descriptionChars: jobs.descriptionChars,
       verdict: labels.verdict,
-      note: labels.note,
     })
     .from(jobs)
     .leftJoin(labels, eq(labels.url, jobs.url))
@@ -181,7 +179,6 @@ export async function getJobs(filter: JobFilter = 'open', limit = LIST_LIMIT): P
       posted: formatPosted(r.postedAt, r.firstSeen, now),
       descriptionChars: r.descriptionChars,
       verdict: r.verdict,
-      note: r.note,
     };
   });
 }

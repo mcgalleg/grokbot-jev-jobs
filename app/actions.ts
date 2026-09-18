@@ -17,7 +17,7 @@ import { VERDICTS, type Verdict } from '@/lib/verdicts';
  * reaches here is already you. Opening it up to anyone else would need an
  * ownership check on this row first.
  */
-export async function setVerdict(url: string, verdict: Verdict | null, note?: string) {
+export async function setVerdict(url: string, verdict: Verdict | null) {
   if (!url) throw new Error('url is required');
   if (verdict !== null && !VERDICTS.includes(verdict)) throw new Error(`bad verdict: ${verdict}`);
 
@@ -27,10 +27,10 @@ export async function setVerdict(url: string, verdict: Verdict | null, note?: st
   } else {
     await db
       .insert(labels)
-      .values({ url, verdict, note: note ?? null })
+      .values({ url, verdict })
       .onConflictDoUpdate({
         target: labels.url,
-        set: { verdict, note: note ?? null },
+        set: { verdict },
       });
   }
   revalidatePath('/');

@@ -94,6 +94,7 @@ export const jobs = pgTable(
 export const labels = pgTable('labels', {
   url: text('url').primaryKey(),
   verdict: text('verdict').notNull(),
+  /** Unused. Nothing writes a note today; the column is kept because it exists. */
   note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

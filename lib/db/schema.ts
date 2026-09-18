@@ -70,7 +70,7 @@ export const jobs = sqliteTable(
   ],
 );
 
-/** Your verdict on a scored job. This is the labelled set that tells you if jev is right. */
+/** What you did about a scored job, so the open list can stop showing it. */
 export const labels = sqliteTable('labels', {
   url: text('url').primaryKey(),
   verdict: text('verdict').notNull(), // 'applied' | 'ignored'
