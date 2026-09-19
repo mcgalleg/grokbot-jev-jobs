@@ -21,13 +21,18 @@ export const PROFILE_ENV = {
   summary: 'PROFILE_SUMMARY',
   resume: 'PROFILE_RESUME',
   targets: 'PROFILE_TARGETS',
+  facts: 'PROFILE_FACTS',
 } as const;
 
 export const PROFILE_FILES = {
   summary: 'summary.md',
   resume: 'resume.md',
   targets: 'targets.md',
+  facts: 'facts.md',
 } as const;
+
+/** Every part, including the optional ones. */
+export type ProfilePart = keyof typeof PROFILE_ENV;
 
 export interface Profile {
   /** ~200 words, for the cheap title pass. */
@@ -68,9 +73,19 @@ export function loadProfile(): Profile {
   return cached;
 }
 
+/**
+ * Short, checkable facts for answering screening questions during Apply:
+ * work authorization, sponsorship, clearance, relocation. Optional, because
+ * only the page brain reads it; the pipeline runs without it. It lives in the
+ * profile rather than in code because this repo is public.
+ */
+export function candidateFacts(): string | null {
+  return process.env[PROFILE_ENV.facts]?.trim() || fromDisk(PROFILE_FILES.facts) || null;
+}
+
 /** Which source each part came from. Used by the health probe. */
-export function profileSources(): Record<ProfileKey, 'env' | 'disk' | 'missing'> {
-  const keys: ProfileKey[] = ['summary', 'resume', 'targets'];
+export function profileSources(): Record<ProfilePart, 'env' | 'disk' | 'missing'> {
+  const keys = Object.keys(PROFILE_ENV) as ProfilePart[];
   return Object.fromEntries(
     keys.map((k) => [
       k,
@@ -80,7 +95,7 @@ export function profileSources(): Record<ProfileKey, 'env' | 'disk' | 'missing'>
           ? 'disk'
           : 'missing',
     ]),
-  ) as Record<ProfileKey, 'env' | 'disk' | 'missing'>;
+  ) as Record<ProfilePart, 'env' | 'disk' | 'missing'>;
 }
 
 /**

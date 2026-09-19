@@ -287,6 +287,23 @@ export function secretsMatch(provided: string | null, expected: string | undefin
   return mismatch === 0;
 }
 
+/**
+ * Gate for every route Rudy calls: the write-back, the pre-Submit status check,
+ * and the page brain. Returns the error response, or null when authorised.
+ * 503 rather than 401 when the secret is unset, so a misconfigured deployment
+ * reads as ours to fix, not Rudy's.
+ */
+export function authorizeRudy(headers: Headers, env: EnvMap = process.env): Response | null {
+  const expected = env.RUDY_CALLBACK_SECRET;
+  if (!expected) {
+    return Response.json({ ok: false, error: 'RUDY_CALLBACK_SECRET is not set' }, { status: 503 });
+  }
+  if (!secretsMatch(callbackSecretFrom(headers), expected)) {
+    return Response.json({ ok: false, error: 'unauthorised' }, { status: 401 });
+  }
+  return null;
+}
+
 export type CallbackDecision =
   | { action: 'accept' }
   | { action: 'idempotent' }

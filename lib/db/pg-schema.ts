@@ -144,6 +144,29 @@ export const applies = pgTable(
   (t) => [index('applies_status_idx').on(t.status)],
 );
 
+/**
+ * One row per page-brain call from Resume Rudy (POST /api/rudy/page-brain) or
+ * the local CLI. `input` is a summary, not the whole page; `error` is set when
+ * the call failed and `answers` is then null.
+ */
+export const pageBrainCalls = pgTable(
+  'page_brain_calls',
+  {
+    id: serial('id').primaryKey(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    source: text('source').notNull(),
+    mode: text('mode').notNull(),
+    input: jsonb('input').notNull(),
+    answers: jsonb('answers'),
+    confidence: doublePrecision('confidence'),
+    inputTokens: integer('input_tokens'),
+    costUsd: doublePrecision('cost_usd'),
+    latencyMs: integer('latency_ms'),
+    error: text('error'),
+  },
+  (t) => [index('page_brain_calls_created_idx').on(t.createdAt)],
+);
+
 /** One row per stage run, so cost and volume are auditable. */
 export const runs = pgTable(
   'runs',
@@ -162,3 +185,4 @@ export type NewJob = typeof jobs.$inferInsert;
 export type Label = typeof labels.$inferSelect;
 export type ApplyAttempt = typeof applyAttempts.$inferSelect;
 export type Apply = typeof applies.$inferSelect;
+export type PageBrainCall = typeof pageBrainCalls.$inferSelect;

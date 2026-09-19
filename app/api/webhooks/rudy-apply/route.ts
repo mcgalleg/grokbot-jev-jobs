@@ -1,5 +1,5 @@
 import { applyRudyCallback, readRudyApplyStatus } from '@/lib/apply-server';
-import { callbackSecretFrom, parseCallbackBody, parseRudyStatusQuery, secretsMatch } from '@/lib/apply';
+import { authorizeRudy, parseCallbackBody, parseRudyStatusQuery } from '@/lib/apply';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
  * when that env var is set).
  */
 export async function POST(req: Request) {
-  const denied = authorizeRudy(req);
+  const denied = authorizeRudy(req.headers);
   if (denied) return denied;
 
   let json: unknown;
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
  * `{ status, detail, attemptId }`.
  */
 export async function GET(req: Request) {
-  const denied = authorizeRudy(req);
+  const denied = authorizeRudy(req.headers);
   if (denied) return denied;
 
   const parsed = parseRudyStatusQuery(new URL(req.url).searchParams);
@@ -70,15 +70,4 @@ export async function GET(req: Request) {
 
   const body = { status: row.status, detail: row.detail, attemptId: row.attemptId };
   return Response.json(body, { status: row.found ? 200 : 404 });
-}
-
-function authorizeRudy(req: Request): Response | null {
-  const expected = process.env.RUDY_CALLBACK_SECRET;
-  if (!expected) {
-    return Response.json({ ok: false, error: 'RUDY_CALLBACK_SECRET is not set' }, { status: 503 });
-  }
-  if (!secretsMatch(callbackSecretFrom(req.headers), expected)) {
-    return Response.json({ ok: false, error: 'unauthorised' }, { status: 401 });
-  }
-  return null;
 }

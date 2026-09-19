@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test lib/apply.test.ts",
+    "test": "tsx --test lib/apply.test.ts lib/page-brain.test.ts",
     "ingest": "tsx scripts/run.mts ingest",
     "triage": "tsx scripts/run.mts triage",
     "describe": "tsx scripts/run.mts describe",
@@ -19,6 +19,7 @@
     "check:ats": "tsx scripts/check-ats.mts",
     "migrate:neon": "tsx scripts/migrate-to-neon.mts",
     "profile:push": "tsx scripts/profile-push.mts",
+    "apply:page-brain": "tsx scripts/apply-page-brain.mts",
     "purge:presales": "tsx scripts/purge-presales.mts"
   },
   "dependencies": {

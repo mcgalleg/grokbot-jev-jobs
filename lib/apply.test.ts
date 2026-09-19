@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  authorizeRudy,
   buildApplyRequestPayload,
   buildCallbackUrl,
   canStartApply,
@@ -353,5 +354,26 @@ describe('parseRudyStatusQuery', () => {
     assert.equal(parseRudyStatusQuery(new URLSearchParams()).ok, false);
     assert.equal(parseRudyStatusQuery(new URLSearchParams({ attemptId: 'nope' })).ok, false);
     assert.equal(parseRudyStatusQuery(new URLSearchParams({ jobUrl: 'not-a-url' })).ok, false);
+  });
+});
+
+describe('authorizeRudy', () => {
+  const headers = (init: Record<string, string>) => new Headers(init);
+
+  it('is a 503 when the deployment has no secret configured', () => {
+    const r = authorizeRudy(headers({ authorization: 'Bearer anything' }), {});
+    assert.equal(r?.status, 503);
+  });
+
+  it('is a 401 for a missing or wrong secret', () => {
+    const env = { RUDY_CALLBACK_SECRET: 'right' };
+    assert.equal(authorizeRudy(headers({}), env)?.status, 401);
+    assert.equal(authorizeRudy(headers({ authorization: 'Bearer wrong' }), env)?.status, 401);
+  });
+
+  it('accepts the secret as a Bearer token or x-rudy-secret', () => {
+    const env = { RUDY_CALLBACK_SECRET: 'right' };
+    assert.equal(authorizeRudy(headers({ authorization: 'Bearer right' }), env), null);
+    assert.equal(authorizeRudy(headers({ 'x-rudy-secret': 'right' }), env), null);
   });
 });
