@@ -82,3 +82,14 @@ export function profileSources(): Record<ProfileKey, 'env' | 'disk' | 'missing'>
     ]),
   ) as Record<ProfileKey, 'env' | 'disk' | 'missing'>;
 }
+
+/**
+ * The base salary floor, read from the "Base salary floor is $NNN,NNN" line in
+ * targets.md so the number lives in one place. Null when the targets state no
+ * floor, which turns the salary penalty off rather than guessing one.
+ */
+export function salaryFloor(): number | null {
+  const m = loadProfile().targets.match(/salary floor[^$\n]*\$\s?([\d,]+)/i);
+  const n = m ? Number(m[1].replace(/,/g, '')) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}

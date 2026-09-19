@@ -19,10 +19,36 @@ export class JobExpiredError extends Error {}
 
 const htmlEntities: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'", '#x27': "'",
+  mdash: '—', ndash: '–', hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', bull: '•',
 };
 
-/** Good enough for feeding a model: keep the words and the block structure. */
-export function htmlToText(html: string): string {
+const ESCAPED_TAG = /&lt;\/?[a-z][\s\S]*?&gt;/i;
+const unescapeMarkup = (s: string) =>
+  s.replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&amp;/gi, '&');
+
+/**
+ * Markup or entities that survive in text: real tags, escaped ones
+ * (`&lt;p&gt;`), or bare entities such as `&mdash;` between two salary figures.
+ */
+export function looksLikeHtml(text: string): boolean {
+  return (
+    /<\/?(p|div|br|li|ul|span|strong|h[1-6])\b[^>]*>/i.test(text) ||
+    ESCAPED_TAG.test(text) ||
+    /&(#x?[0-9a-f]+|[a-z]+);/i.test(text)
+  );
+}
+
+/**
+ * Good enough for feeding a model: keep the words and the block structure.
+ *
+ * Greenhouse's board API returns `content` HTML-escaped. Decoding entities after
+ * stripping tags turned `&lt;p&gt;` back into `<p>` and stored it, which left
+ * markup in over half the descriptions. So escaped markup is unescaped first,
+ * twice at most, because a few boards double-escape.
+ */
+export function htmlToText(input: string): string {
+  let html = input;
+  for (let i = 0; i < 2 && ESCAPED_TAG.test(html); i++) html = unescapeMarkup(html);
   return html
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
     .replace(/<li[^>]*>/gi, '\n- ')

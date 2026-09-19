@@ -13,11 +13,11 @@
  */
 import '../lib/env.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { experimental_evaluate as evaluate } from 'ai';
 import { getSql } from '../lib/db/pg.ts';
-import { EVIDENCE_RULE, JEV_MODEL, JEV_TIMEOUT_MS, costOf } from '../lib/jev/model.ts';
+import { htmlToText, looksLikeHtml } from '../lib/ats.ts';
+import { EVIDENCE_RULE, askJev, costOf } from '../lib/jev/model.ts';
 import { MOTION_CRITERIA } from '../lib/jev/score.ts';
-import { mapPool, withRetry } from '../lib/pool.ts';
+import { mapPool } from '../lib/pool.ts';
 
 const args = process.argv.slice(2);
 const apply = args.includes('--apply');
@@ -62,26 +62,22 @@ async function classify(): Promise<Judged[]> {
     16,
     async (row): Promise<Judged | null> => {
       try {
-        const r = await withRetry(() =>
-          evaluate({
-            model: JEV_MODEL,
-            state: {
-              posting: {
-                title: row.title.trim(),
-                company: row.company,
-                description: (row.description ?? '').slice(0, MAX_CHARS),
-              },
+        const r = await askJev({
+          state: {
+            posting: {
+              title: row.title.trim(),
+              company: row.company,
+              description: (looksLikeHtml(row.description ?? '') ? htmlToText(row.description ?? '') : row.description ?? '').slice(0, MAX_CHARS),
             },
-            abortSignal: AbortSignal.timeout(JEV_TIMEOUT_MS),
-            questions: {
-              motion: {
-                type: 'choice',
-                instructions: `Where in the customer lifecycle does this role mainly do its work, judged from \`posting.title\` and \`posting.description\`? ${EVIDENCE_RULE}`,
-                criteria: MOTION_CRITERIA,
-              },
+          },
+          questions: {
+            motion: {
+              type: 'choice',
+              instructions: `Where in the customer lifecycle does this role mainly do its work, judged from \`posting.title\` and \`posting.description\`? ${EVIDENCE_RULE}`,
+              criteria: MOTION_CRITERIA,
             },
-          }),
-        );
+          },
+        });
         cost += costOf(r.usage);
         const m = r.answers.motion;
         return {

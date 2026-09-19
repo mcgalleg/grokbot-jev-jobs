@@ -17,8 +17,9 @@ export interface ScoreStats {
 
 /**
  * Stage 3. The real classifier: jev reads the CV, the targets and the full
- * description, answers eleven atomic questions, and lib/jev/score.ts combines them
- * in code into one fit score.
+ * description, answers fourteen atomic questions (fifteen when the posting
+ * states a pay range), and lib/jev/score.ts combines them in code into one
+ * fit score.
  */
 export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
   const log = opts.log ?? console.log;
@@ -70,7 +71,7 @@ export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
         await sql`
           UPDATE jobs SET stage = 'scored', fit_score = ${r.fitScore},
             fit_confidence = ${r.confidence}, blocker_p = ${r.blockerProbability},
-            score_json = ${JSON.stringify({ answers: r.answers, components: r.components })}::jsonb,
+            score_json = ${JSON.stringify({ answers: r.answers, components: r.components, salary: r.salary })}::jsonb,
             scored_at = ${now}, error = NULL
           WHERE url = ${row.url}`;
         // The candidate does not want pre-sales. This is a hard filter, not a
