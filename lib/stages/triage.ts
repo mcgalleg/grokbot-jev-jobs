@@ -10,7 +10,6 @@ export interface TriageStats {
   skipped: number;
   tokens: number;
   cost: number;
-  roles: Record<string, number>;
   stoppedEarly: boolean;
 }
 
@@ -52,7 +51,6 @@ export async function runTriage(opts: TriageOpts = {}): Promise<TriageStats> {
     skipped: 0,
     tokens: 0,
     cost: 0,
-    roles: {},
     stoppedEarly: false,
   };
   if (!rows.length) {
@@ -75,13 +73,12 @@ export async function runTriage(opts: TriageOpts = {}): Promise<TriageStats> {
         const r = await triage(row);
         const keep = r.worthProbability >= threshold;
         stats[keep ? 'kept' : 'rejected']++;
-        stats.roles[r.role] = (stats.roles[r.role] ?? 0) + 1;
         stats.tokens += r.inputTokens;
         stats.cost += r.costUsd;
         await sql`
-          UPDATE jobs SET stage = ${keep ? 'triaged' : 'triage_reject'}, triage_role = ${r.role},
-            triage_role_p = ${r.roleProbability}, triage_seniority = ${r.seniority},
-            triage_worth_p = ${r.worthProbability}, triage_confidence = ${r.confidence},
+          UPDATE jobs SET stage = ${keep ? 'triaged' : 'triage_reject'}, triage_role = NULL,
+            triage_role_p = NULL, triage_seniority = NULL,
+            triage_worth_p = ${r.worthProbability}, triage_confidence = NULL,
             triaged_at = ${now}, error = NULL
           WHERE url = ${row.url}`;
       } catch (error) {

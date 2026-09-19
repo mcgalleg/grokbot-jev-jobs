@@ -57,9 +57,11 @@ keyword guess, and on a 250-posting sample of rows it rejected, jev kept none â€
 but it was throwing away ~7,100 postings feed-wide on a judgement it is not
 qualified to make. `pnpm ingest --drop-junior-levels` opts back in.
 
-**Stage 3** asks ten atomic questions and combines them in code
+**Stage 3** asks fourteen atomic questions and combines them in code
 (`lib/jev/score.ts`), rather than asking one vague "is this a good fit". The
-weights stay inspectable and tunable without re-prompting.
+weights stay inspectable and tunable without re-prompting. Pay is the exception
+to asking Jev: `lib/salary.ts` finds stated ranges in code, Jev only picks which
+one is this role's pay, and code compares it with the floor in `targets.md`.
 
 ## Data source
 
