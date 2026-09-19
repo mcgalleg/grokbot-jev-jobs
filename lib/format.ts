@@ -1,5 +1,6 @@
 /**
- * Display helpers for the two feed-supplied columns, salary and posted date.
+ * Display helpers for the feed-supplied posted-date column, plus the shape of
+ * the aggregator's salary estimate that `getJobs` passes through.
  *
  * Kept out of the components because the posted label depends on the clock, and
  * a client component that recomputes "6d ago" during hydration can disagree with
@@ -12,32 +13,6 @@ export interface SalaryEstimate {
   median?: number;
   p75?: number;
   n?: number;
-}
-
-const usd = (n: number) => `$${Math.round(n / 1000)}k`;
-
-/**
- * The aggregator's market estimate for the title and location, NOT the pay the
- * posting states. Two thirds of rows have no estimate at all, and where it does
- * exist it is a lookup against comparable roles. The `~` and the tooltip are
- * what keep it from being read as an offer — jev judges the real number from the
- * description, and that verdict is the "Under floor" badge, not this column.
- */
-export function formatSalary(
-  salary: SalaryEstimate | null | undefined,
-): { label: string; title: string } | null {
-  if (!salary?.median) return null;
-  const range = [salary.p25, salary.p75].every((v) => typeof v === 'number')
-    ? `${usd(salary.p25!)}–${usd(salary.p75!)}`
-    : null;
-  return {
-    label: `~${usd(salary.median)}`,
-    title:
-      `Market estimate for this title and location, not the posting's stated pay. ` +
-      `Median ${usd(salary.median)}` +
-      (range ? `, middle half ${range}` : '') +
-      (salary.n ? `, from ${salary.n} comparable postings.` : '.'),
-  };
 }
 
 const DAY = 86_400_000;
