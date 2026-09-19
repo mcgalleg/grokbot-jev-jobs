@@ -11,21 +11,28 @@
  *
  * Usage: pnpm profile:push [--dry-run]
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { PROFILE_ENV, PROFILE_FILES, type ProfileKey } from '../lib/profile.ts';
+import { PROFILE_ENV, PROFILE_FILES, type ProfilePart } from '../lib/profile.ts';
 
 const DRY = process.argv.includes('--dry-run');
 const ENVIRONMENTS = ['production', 'preview', 'development'] as const;
-const KEYS: ProfileKey[] = ['summary', 'resume', 'targets'];
+const REQUIRED: ProfilePart[] = ['summary', 'resume', 'targets'];
+/** Pushed when the file exists. Only the Apply page brain reads it. */
+const OPTIONAL: ProfilePart[] = ['facts'];
 
 /** Vercel caps the total size of a deployment's environment at 64KB. */
 const TOTAL_LIMIT = 64 * 1024;
 
-const parts = KEYS.map((key) => {
-  const file = resolve(process.cwd(), 'profile', PROFILE_FILES[key]);
-  const body = readFileSync(file, 'utf8').trim();
+const fileOf = (key: ProfilePart) => resolve(process.cwd(), 'profile', PROFILE_FILES[key]);
+const keys = [...REQUIRED, ...OPTIONAL.filter((key) => existsSync(fileOf(key)))];
+for (const key of OPTIONAL.filter((k) => !keys.includes(k))) {
+  console.log(`(skipping ${PROFILE_ENV[key]}: profile/${PROFILE_FILES[key]} does not exist)`);
+}
+
+const parts = keys.map((key) => {
+  const body = readFileSync(fileOf(key), 'utf8').trim();
   if (!body) throw new Error(`profile/${PROFILE_FILES[key]} is empty`);
   return { key, name: PROFILE_ENV[key], body };
 });

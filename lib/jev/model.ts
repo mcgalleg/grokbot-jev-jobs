@@ -38,18 +38,23 @@ export const EVIDENCE_RULE =
  *
  * `extra` carries questions that are only sometimes asked. They ride in the
  * same request, but their answers are untyped: read them off `answers` by key.
+ *
+ * `timeoutMs` is per attempt. Interactive callers pass a short one: the first
+ * call on a cold deployment has been seen to hang until the timeout and then
+ * succeed on retry, and 30s is too long for Rudy to hold an apply form open.
  */
 export async function askJev<const Q extends Record<string, EvaluationQuestion>>(args: {
   state: Parameters<typeof evaluate>[0]['state'];
   questions: Q;
   extra?: Record<string, EvaluationQuestion>;
+  timeoutMs?: number;
 }): Promise<EvaluationResult<Q>> {
   try {
     return await withRetry(() =>
       evaluate({
         model: JEV_MODEL,
         maxRetries: 0,
-        abortSignal: AbortSignal.timeout(JEV_TIMEOUT_MS),
+        abortSignal: AbortSignal.timeout(args.timeoutMs ?? JEV_TIMEOUT_MS),
         state: args.state,
         questions: { ...args.extra, ...args.questions } as Q,
       }),

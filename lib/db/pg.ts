@@ -125,6 +125,7 @@ export async function migrate(): Promise<void> {
     )`;
   await sql`CREATE INDEX IF NOT EXISTS runs_kind_idx ON runs(kind, finished_at)`;
   await ensureApplySchema();
+  await ensurePageBrainSchema();
 }
 
 /**
@@ -180,6 +181,42 @@ async function createApplySchema(): Promise<void> {
       completed_at TIMESTAMPTZ
     )`;
   await sql`CREATE INDEX IF NOT EXISTS applies_status_idx ON applies(status)`;
+}
+
+/**
+ * The page brain's call log. Rudy calls it through a deployed route, which has
+ * no local disk to append to, so the history lives here. Cached like the apply
+ * schema: one CREATE per process.
+ */
+let pageBrainSchemaReady: Promise<void> | null = null;
+
+export async function ensurePageBrainSchema(): Promise<void> {
+  if (!pageBrainSchemaReady) {
+    pageBrainSchemaReady = createPageBrainSchema().catch((error) => {
+      pageBrainSchemaReady = null;
+      throw error;
+    });
+  }
+  return pageBrainSchemaReady;
+}
+
+async function createPageBrainSchema(): Promise<void> {
+  const sql = getSql();
+  await sql`
+    CREATE TABLE IF NOT EXISTS page_brain_calls (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      source TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      input JSONB NOT NULL,
+      answers JSONB,
+      confidence DOUBLE PRECISION,
+      input_tokens INTEGER,
+      cost_usd DOUBLE PRECISION,
+      latency_ms INTEGER,
+      error TEXT
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS page_brain_calls_created_idx ON page_brain_calls(created_at)`;
 }
 
 /** Record a finished stage run. Cost and volume stay auditable without the Vercel dashboard. */

@@ -12,7 +12,9 @@ calibrated confidence, in roughly half a second, for $0.042 per million input
 tokens with output tokens free. That makes it cheap enough to read every
 plausible posting every day.
 
-This repo is private (`mcgalleg/grokbot-jev-jobs`, renamed from `jev-job-search`).
+This repo is **public** (`mcgalleg/grokbot-jev-jobs`, renamed from `jev-job-search`):
+anything personal lives in the git-ignored `profile/` and in Vercel env vars,
+never in code.
 The Vercel project is `grokbot-jev-jobs`. Production hosts:
 
 - [https://jev-job-search.vercel.app](https://jev-job-search.vercel.app) — legacy primary
@@ -27,14 +29,16 @@ Public feed ──► ingest ──► jev triage ──► ATS describe ──�
                                                                     │
 Dashboard Apply ──► apply_attempts + applies ──► POST Rudy webhook ─┘
                          ▲
-                         └── GET/POST /api/webhooks/rudy-apply (secret-gated status + write-back)
+                         ├── GET/POST /api/webhooks/rudy-apply (secret-gated status + write-back)
+                         └── POST /api/rudy/page-brain         (secret-gated Jev calls mid-apply)
 ```
 
 Two Jev uses, do not mix them up:
 
 1. **This app** — title triage and full-text scoring via the AI Gateway.
 2. **Rudy (production apply)** — a sparse page-brain that scans for knock-outs
-   *before* a heavy ATS fill. It is not there to make fill faster.
+   *before* a heavy ATS fill. It is not there to make fill faster. Rudy calls
+   it on the deployment, so it always runs the code released from `master`.
 
 ## The funnel
 
@@ -46,7 +50,7 @@ postings that survived the cheap work.
 | 0. Ingest | deterministic code | ~1.46M postings from the feed | 5.6% |
 | 1. Triage | jev, title only | title, company, location | 10.3% |
 | 2. Describe | ATS APIs | survivors only | 65% (rest expired or unsupported) |
-| 3. Score | jev, full text | resume + targets + description | all |
+| 3. Score | jev, full text | resume + targets + description | all; pre-sales auto-ignored |
 
 **Stage 0** applies only hard facts: location, and the recruiter flag. Anything
 that is a judgement call is left to jev, because a title regex misses "Member of
@@ -57,11 +61,26 @@ keyword guess, and on a 250-posting sample of rows it rejected, jev kept none �
 but it was throwing away ~7,100 postings feed-wide on a judgement it is not
 qualified to make. `pnpm ingest --drop-junior-levels` opts back in.
 
+**Stage 1** judges titles against the summary and only two sections of
+`targets.md` — "Roles I want" and "What makes a role a weak match" — because a
+title says nothing about pay or location policy. On 600 postings that cut tokens
+41% and agreed with the full-profile call 96.5% of the time. Rename either
+heading and triage falls back to sending the whole file.
+
 **Stage 3** asks fourteen atomic questions and combines them in code
 (`lib/jev/score.ts`), rather than asking one vague "is this a good fit". The
-weights stay inspectable and tunable without re-prompting. Pay is the exception
-to asking Jev: `lib/salary.ts` finds stated ranges in code, Jev only picks which
-one is this role's pay, and code compares it with the floor in `targets.md`.
+weights stay inspectable and tunable without re-prompting. Three results are
+rules rather than weights:
+
+- **Pay** is the exception to asking Jev. `lib/salary.ts` finds stated ranges in
+  code, over the full description, Jev only picks which one is this role's pay,
+  and code compares it with the floor in `targets.md`.
+- **Pre-sales** roles are auto-ignored. Jev answers where in the customer
+  lifecycle the role works; when its top choice is pre-sales, scoring writes the
+  dashboard's own Ignore label, so a wrong call is one click to undo.
+  `pnpm purge:presales` is the backfill for rows scored before this existed.
+- **Hard blockers** are four separate questions — clearance, a specific degree,
+  relocation, non-US work authorization — and the worst one scales the score down.
 
 ## Data source
 
@@ -155,12 +174,58 @@ Documented here so a later reader knows what Apply actually does. No secrets.
 - **Sparse Jev page-brain:** a knock-out scan *before* the heavy fill — visa /
   sponsorship, clearance, relocate, onsite / multi-day office. Then classify
   the outcome. Jev is used for an ambiguous next-action only, not to go faster.
-  Browser fill dominates wall clock.
+  Browser fill dominates wall clock. See [Page brain](#page-brain).
 - **Example:** a San Francisco 5-days/week onsite role vs a Lakewood, CO remote
   candidate is `blocked`, with a short plain reason under the title.
 
 Production incidents and the overwrite/GET contract are in
 `data/apply-efficiency-learnings.md`.
+
+### Page brain
+
+Rudy asks for small Jev judgments mid-apply by calling the deployment:
+
+```
+POST /api/rudy/page-brain
+Authorization: Bearer $RUDY_CALLBACK_SECRET          (or x-rudy-secret)
+x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET
+
+{ "mode": "knock-out", "question": "...", "options": ["Yes", "No"] }
+```
+
+It answers `{ mode, answers, confidence, inputTokens, costUsd, latencyMs }`.
+Every mode also accepts optional `ats` and `url`.
+
+| Mode | Send | Read from `answers` |
+|---|---|---|
+| `knock-out` | `question`, `options` (may be empty), optional `pageSummary`, `candidateFacts` | `truthfulOption` — the option to select, or `null` when the facts do not settle it; `hardKnockOut` (+ `…Probability`) — whether that truthful answer disqualifies |
+| `next-action` | `pageSummary`, `visibleActions` | `nextAction`; `safeToClick` / `safeToClickTrue` for that button; `destructive` — true when code vetoed it (Cancel, Withdraw, Delete…) |
+| `field-map` | `neededKey` (e.g. `linkedinUrl`), `fieldLabels`, optional `pageSummary` | `fieldLabel` — the field to fill, or `null` when none fits: skip it |
+| `outcome` | `pageSummary`, optional `emailEvidence` | `outcome` — `applied`, `failed`, `blocked` or `still_working` |
+
+`400` is a bad request, with every problem named. `503` is a setup problem on
+our side, such as no candidate facts configured. `502` is Jev failing after
+retries. Warm calls take 200–400ms. Each Jev attempt times out at 8s rather than
+the pipeline's 30s, because the first call on a cold deployment has been seen to
+hang and then succeed on retry.
+
+Knock-out answers from the candidate facts in the profile (`PROFILE_FACTS`, see
+[Your profile](#your-profile)); a request may override them with
+`candidateFacts`. Safety is judged per button and the destructive word list is
+applied in code, so a pick is never made safe by the page's own wording.
+
+Every call is logged to `page_brain_calls` in Neon: mode, a summary of the input
+(never the facts), answers, tokens, cost and latency. Rows before 2026-09-19 were
+imported from the old local `data/apply-page-brain-log.jsonl`.
+
+The logic is in `lib/apply-page-brain.ts` (Jev calls) and `lib/page-brain.ts`
+(validation and code-side decisions, unit-tested). `pnpm apply:page-brain` runs
+the same thing locally for debugging a prompt change, logged with source `cli`:
+
+```bash
+echo '{"question":"Do you need sponsorship?","options":["Yes","No"]}' \
+  | pnpm apply:page-brain --mode knock-out
+```
 
 ### Universal CV and cover
 
@@ -179,9 +244,9 @@ Do not commit those files or paste resume text into this repo.
 |---|---|---|
 | `RUDY_APPLY_WEBHOOK_URL` | outbound | Where Apply POSTs the request |
 | `RUDY_APPLY_WEBHOOK_SECRET` | outbound | `Authorization: Bearer …` on that POST |
-| `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send on GET/POST `/api/webhooks/rudy-apply` |
+| `RUDY_CALLBACK_SECRET` | inbound | Shared secret Rudy must send on GET/POST `/api/webhooks/rudy-apply` and POST `/api/rudy/page-brain` |
 | `APP_BASE_URL` | outbound | Preferred public origin used to build `callbackUrl` |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | inbound | Vercel Deployment Protection bypass so Rudy can reach the callback without a session cookie |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | inbound | Vercel Deployment Protection bypass so Rudy can reach the callback and page brain without a session cookie |
 
 `callbackUrl` is derived in this order: `APP_BASE_URL`, then
 `NEXT_PUBLIC_APP_URL`, then `https://$VERCEL_URL` (injected on Vercel), then
@@ -233,13 +298,15 @@ delete both, and `data/`, once you no longer want the local copy as a backup.
 ### Your profile
 
 `profile/` and `output/` are **git-ignored on purpose** — they hold a CV, cover
-letters and a salary floor, and git history is hard to scrub.
+letters, a salary floor and work-authorization facts, and git history is hard to
+scrub. The repo is public, so this is not optional.
 
 | File | Env var | What it is |
 |---|---|---|
 | `profile/summary.md` | `PROFILE_SUMMARY` | ~200 words on the candidate, for the cheap title pass |
 | `profile/resume.md` | `PROFILE_RESUME` | the full CV as markdown, for deep scoring |
 | `profile/targets.md` | `PROFILE_TARGETS` | what a good role looks like, incl. any salary floor |
+| `profile/facts.md` | `PROFILE_FACTS` | *optional* — checkable facts for Apply screening questions: work authorization, sponsorship, clearance, relocation. Only the page brain reads it |
 
 `lib/profile.ts` reads the env var first and falls back to the file. Locally you
 edit the markdown; the deployment reads the env vars, because a build from GitHub
@@ -252,7 +319,7 @@ brings the profile down from the project, and the pipeline runs off the env vars
 Write the files only if you want to edit a profile, or if you have no access to
 the Vercel project.
 
-**After editing any of the three, push them up:**
+**After editing any of them, push them up** (`facts.md` is pushed when it exists):
 
 ```bash
 pnpm profile:push        # copies the files into the Vercel project env
@@ -301,13 +368,22 @@ pnpm check:jev    # one live gateway call: confirms the key, prints latency and 
 pnpm check:ats    # fetches a few real postings from each wired ATS, plus URL parsing
 ```
 
+And a few more:
+
+```bash
+pnpm test                     # unit tests: apply lifecycle, Rudy auth, page-brain validation
+pnpm score --redo             # rescore everything after a change to scoring or targets.md (~$1.20)
+pnpm purge:presales           # dry run: which open rows Jev reads as pre-sales; --apply ignores them
+pnpm apply:page-brain --mode knock-out < payload.json   # the page brain, locally
+```
+
 ## Tuning it
 
 Three files control quality, in descending order of leverage.
 
 1. **`profile/targets.md`** — what a good role looks like. This is the single
    biggest lever. Jev reads it as the definition of a match.
-2. **`lib/jev/score.ts`** — the ten questions and the composite weights.
+2. **`lib/jev/score.ts`** — the fourteen questions and the composite weights.
 3. **`profile/summary.md`** — the compact profile used for title triage, kept
    short so the cheap pass stays cheap.
 
@@ -330,8 +406,9 @@ The first full pass, September 2026:
 ## Reading the dashboard
 
 One row per scored posting, ranked by fit. The pay floor in `targets.md` is
-judged by jev from the description itself, and that verdict shows as the
-**Under floor** badge. One column comes from the feed rather than from jev:
+checked in code against a pay range the posting states (Jev only picks which
+range is the pay), and a range below it shows as the **Under floor** badge. A
+posting that states no range is never marked under the floor. One column comes from the feed rather than from jev:
 
 - **Posted** is the job board's own `updated_at` where the feed carries it, and
   otherwise the date the aggregator first saw the posting, which is an upper bound
@@ -429,7 +506,7 @@ following one.
 ### Deploying
 
 The Vercel project `grokbot-jev-jobs` is connected to `mcgalleg/grokbot-jev-jobs`
-(private), production branch `master`. Pushing to `master` builds and promotes
+(public), production branch `master`. Pushing to `master` builds and promotes
 automatically; branches and pull requests get preview deployments.
 
 ```bash
@@ -447,9 +524,9 @@ as environment variables rather than as files in the repo.
 **Vercel Authentication** on `all` deployments: the dashboard is tied to your
 Vercel account, with no auth code in the app and no shared password. External
 requests get a 302, including to the cron path. Cron is exempt and carries
-`CRON_SECRET`. Resume Rudy's write-back is not a session: it uses
-`RUDY_CALLBACK_SECRET` plus, when needed, the Vercel automation bypass (see
-[Apply → Rudy → write-back](#apply--rudy--write-back)). `.vercelignore` keeps
+`CRON_SECRET`. Resume Rudy's write-back and page-brain calls are not a
+session: they use `RUDY_CALLBACK_SECRET` plus, when needed, the Vercel automation
+bypass (see [Apply → Rudy → write-back](#apply--rudy--write-back)). `.vercelignore` keeps
 `output/`, `profile/` and `data/` out of the build context.
 
 ## Stack
@@ -457,16 +534,28 @@ requests get a 302, including to the cron path. Cron is exempt and carries
 Next.js 16 App Router, React 19, Tailwind 4, shadcn/ui (Base UI),
 AI SDK 7 `experimental_evaluate`, Neon Postgres via `@neondatabase/serverless`.
 
-One database, one schema (`lib/db/pg-schema.ts`), including `apply_attempts` and
-`applies`. The four pipeline stages live in `lib/stages/` and are called by both
-the cron route and the CLI, so the scheduled run and a hand-run cannot drift
-apart. Apply lifecycle lives in `lib/apply.ts` / `lib/apply-server.ts`.
+One database, one schema (`lib/db/pg-schema.ts`), including `apply_attempts`,
+`applies` and `page_brain_calls`. The four pipeline stages live in `lib/stages/`
+and are called by both the cron route and the CLI, so the scheduled run and a
+hand-run cannot drift apart. Apply lifecycle lives in `lib/apply.ts` /
+`lib/apply-server.ts`; the page brain in `lib/page-brain.ts` /
+`lib/apply-page-brain.ts`.
+
+Every Jev call goes through `askJev` in `lib/jev/model.ts`: one model id, one
+30s timeout, and one retry layer that only repeats 429s, 5xx, timeouts and
+dropped connections. It also absorbs an AI SDK check that rejects a Choice when
+two rounded probabilities tie, which would otherwise mark a posting as an error.
 
 ## Known limits
 
 - `experimental_evaluate` is experimental and may change in a patch release.
   The `ai` version is pinned at 7.0.105.
-- Jev rate limits are undocumented. Concurrency 8 has been tested; higher is untested.
+- Jev's published limits are 1,200 requests a minute and 250,000 tokens a
+  second, and TypeSafe notes they can change without notice. A full rescore ran
+  at concurrency 12 without a rate-limit error.
+- The Gateway serves Jev only under the moving alias `typesafe-ai/jev`; a pinned
+  version (`jev-1.13.0`) is not found. Thresholds such as triage's 0.35 were
+  tuned against the current model and should be rechecked when it changes.
 - Workday is the tightest ATS limiter and runs at concurrency 3, about 2 postings
   per second. It is the only platform that costs one request per posting.
 - Job descriptions are untrusted text. Jev cannot generate, so the worst case is
