@@ -1,5 +1,6 @@
 import { StatTiles } from '@/components/stat-tiles';
 import { JobList } from '@/components/job-list';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { getFunnel, getJobs, LIST_LIMIT, STRONG_THRESHOLD, type JobFilter } from '@/lib/queries';
 
 // Counts and apply state change on every button press, so never serve a cached page.
@@ -40,7 +41,10 @@ export default async function Page({
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Job fit, scored by jev</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Job fit, scored by jev</h1>
+          <ThemeToggle />
+        </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Postings from the public aggregator feed, screened in code, triaged and scored by
           TypeSafe&nbsp;jev through the Vercel AI Gateway.
