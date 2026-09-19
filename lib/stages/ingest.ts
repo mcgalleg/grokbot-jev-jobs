@@ -131,12 +131,16 @@ export async function runIngest(opts: IngestOpts = {}): Promise<IngestStats> {
  * ON CONFLICT refreshes the feed-derived columns but deliberately leaves `stage`
  * alone: a posting we have already triaged or scored must not be dragged back to
  * 'new' because the feed restated its title.
+ *
+ * The feed can list the same URL twice, and Postgres refuses an upsert that
+ * touches one row twice in a single statement, so dedupe first (last wins).
  */
 async function insertJobs(
   sql: ReturnType<typeof getSql>,
   batch: readonly FeedJob[],
 ): Promise<number> {
-  const rows = batch.map((j) => [
+  const unique = [...new Map(batch.map((j) => [j.url!, j])).values()];
+  const rows = unique.map((j) => [
     j.url!,
     j.title!,
     j.company!,
