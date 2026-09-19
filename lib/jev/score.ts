@@ -16,6 +16,9 @@ export interface ScoreOutput {
   confidence: number;
   blockerProbability: number;
   compBelowFloorProbability: number;
+  /** Jev's top choice for where in the customer lifecycle the role works. */
+  motion: keyof typeof MOTION_CRITERIA;
+  preSalesProbability: number;
   answers: Record<string, unknown>;
   components: Record<string, number>;
   inputTokens: number;
@@ -36,6 +39,32 @@ export const WEIGHTS = {
   aiNative: 1,
   domain: 1,
 } as const;
+
+/**
+ * Where in the customer lifecycle a role works. The candidate does not want
+ * pre-sales, and "solutions engineer" or "solutions architect" titles are split
+ * between pre-sales and post-sales, so the title alone cannot decide it.
+ *
+ * The `excludes` clause matters: without it, growth and enterprise product
+ * managers read as pre-sales because they also help win customers. Measured on
+ * the 5,381-row open queue, it took PM titles in the pre-sales set from 20 to 1.
+ */
+export const MOTION_CRITERIA = {
+  preSales: {
+    definition:
+      'Pre-sales: a role on or beside the sales team that works directly with specific prospects to win deals before the contract is signed.',
+    examples:
+      'product demos, proofs of concept, technical discovery calls with prospects, RFP and security questionnaire responses, partnering with account executives, carrying or supporting a quota or pipeline target. Typical titles: sales engineer, pre-sales consultant, pre-sales solutions engineer or solutions architect, field CTO.',
+    excludes:
+      'Product managers, growth, marketing, and developer relations roles are not pre-sales even when they drive acquisition or revenue, because they work through the product or audience rather than on individual deals.',
+  },
+  postSales:
+    'Post-sales: the role mainly works with customers who have already bought, such as deployment, implementation, onboarding, forward deployed or embedded engineering, professional services, or customer success.',
+  mixed:
+    'A customer-facing technical role that clearly and substantially spans both winning individual deals and delivering for existing customers, with neither dominating.',
+  notCustomerFacing:
+    'Not organised around individual customer accounts: product management (including growth and acquisition product management), software engineering, developer relations, marketing, and other internal roles.',
+};
 
 /** How long a description we send. Keeps cost predictable on verbose postings. */
 export const MAX_DESCRIPTION_CHARS = 12_000;
@@ -62,6 +91,11 @@ export async function scoreJob(job: ScoreInput): Promise<ScoreOutput> {
           type: 'choice',
           instructions: `Which category best describes this role, judged from the full description? ${EVIDENCE_RULE}`,
           criteria: ROLE_CRITERIA,
+        },
+        motion: {
+          type: 'choice',
+          instructions: `Where in the customer lifecycle does this role mainly do its work, judged from \`posting.title\` and \`posting.description\`? ${EVIDENCE_RULE}`,
+          criteria: MOTION_CRITERIA,
         },
         skills: {
           type: 'score',
@@ -168,6 +202,8 @@ export async function scoreJob(job: ScoreInput): Promise<ScoreOutput> {
       : 0,
     blockerProbability: a.blocker.probability,
     compBelowFloorProbability: a.compBelowFloor.probability,
+    motion: a.motion.choice as keyof typeof MOTION_CRITERIA,
+    preSalesProbability: a.motion.probabilities?.preSales ?? (a.motion.choice === 'preSales' ? 1 : 0),
     answers: a as unknown as Record<string, unknown>,
     components,
     inputTokens: result.usage.inputTokens ?? 0,
