@@ -27,7 +27,6 @@ import {
   type ApplyPointer,
   type ApplyStatus,
 } from '@/lib/apply';
-import { formatSalary } from '@/lib/format';
 import type { JobBreakdown, JobListItem } from '@/lib/job-view';
 
 const ROLE_LABEL: Record<string, string> = {
@@ -141,7 +140,6 @@ function useApplyingPoll(
 const COL = {
   fit: 'w-[126px] shrink-0',
   role: 'hidden w-28 shrink-0 sm:block',
-  salary: 'hidden w-16 shrink-0 text-right sm:block',
   posted: 'hidden w-20 shrink-0 text-right md:block',
   actions: 'w-[268px] shrink-0',
 } as const;
@@ -152,9 +150,6 @@ function Header() {
       <span className={COL.fit}>Fit</span>
       <span className="min-w-0 flex-1">Role</span>
       <span className={COL.role}>Type</span>
-      <span className={COL.salary} title="Market estimate from the aggregator, not stated pay">
-        Salary
-      </span>
       <span className={COL.posted}>Posted</span>
       <span className={`${COL.actions} text-right`}>Status</span>
     </div>
@@ -430,7 +425,6 @@ function JobRow({
 }) {
   const applyStatus = pointer.status;
   const applyDetail = pointer.detail;
-  const salary = formatSalary(job.salary);
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 [content-visibility:auto] [contain-intrinsic-size:auto_72px]">
@@ -473,11 +467,8 @@ function JobRow({
         <div className="truncate text-sm text-muted-foreground">
           {job.company}
           {job.location ? ` · ${job.location}` : ''}
-          {/* Below sm the salary and posted columns are hidden, so carry both here. */}
-          <span className="sm:hidden">
-            {salary ? ` · ${salary.label}` : ''}
-            {job.posted ? ` · ${job.posted.label}` : ''}
-          </span>
+          {/* Below sm the posted column is hidden, so carry it here. */}
+          <span className="sm:hidden">{job.posted ? ` · ${job.posted.label}` : ''}</span>
         </div>
       </div>
 
@@ -486,13 +477,6 @@ function JobRow({
           {ROLE_LABEL[job.role] ?? job.role}
         </Badge>
       </div>
-
-      <span
-        className={`${COL.salary} text-sm tabular-nums ${salary ? 'text-foreground' : 'text-muted-foreground'}`}
-        title={salary?.title ?? 'The aggregator has no market estimate for this posting'}
-      >
-        {salary?.label ?? '—'}
-      </span>
 
       <span
         className={`${COL.posted} text-sm whitespace-nowrap text-muted-foreground`}
