@@ -1,12 +1,15 @@
 import { getSql, recordRun } from '../db/pg';
 import { scoreJob } from '../jev/score';
 import { mapPool } from '../pool';
+import { IGNORED } from '../verdicts';
 import { expired, type StageOpts } from './types';
 
 export interface ScoreStats {
   scored: number;
   errors: number;
   skipped: number;
+  /** Scored, then auto-ignored because jev's top choice was pre-sales. */
+  preSalesIgnored: number;
   tokens: number;
   cost: number;
   stoppedEarly: boolean;
@@ -14,7 +17,7 @@ export interface ScoreStats {
 
 /**
  * Stage 3. The real classifier: jev reads the CV, the targets and the full
- * description, answers ten atomic questions, and lib/jev/score.ts combines them
+ * description, answers eleven atomic questions, and lib/jev/score.ts combines them
  * in code into one fit score.
  */
 export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
@@ -38,6 +41,7 @@ export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
     scored: 0,
     errors: 0,
     skipped: 0,
+    preSalesIgnored: 0,
     tokens: 0,
     cost: 0,
     stoppedEarly: false,
@@ -69,6 +73,15 @@ export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
             score_json = ${JSON.stringify({ answers: r.answers, components: r.components })}::jsonb,
             scored_at = ${now}, error = NULL
           WHERE url = ${row.url}`;
+        // The candidate does not want pre-sales. This is a hard filter, not a
+        // score penalty, but it uses the dashboard's own Ignore label so a wrong
+        // call is one click to undo. DO NOTHING keeps an existing label as is.
+        if (r.motion === 'preSales') {
+          stats.preSalesIgnored++;
+          await sql`
+            INSERT INTO labels (url, verdict) VALUES (${row.url}, ${IGNORED})
+            ON CONFLICT (url) DO NOTHING`;
+        }
       } catch (error) {
         stats.errors++;
         await sql`
@@ -85,6 +98,7 @@ export async function runScore(opts: StageOpts = {}): Promise<ScoreStats> {
   await recordRun('score', startedAt, stats);
   log(
     `score: scored ${stats.scored}, errors ${stats.errors}` +
+      (stats.preSalesIgnored ? `, ignored ${stats.preSalesIgnored} as pre-sales` : '') +
       (stats.skipped ? `, skipped ${stats.skipped} (out of time)` : '') +
       ` — $${stats.cost.toFixed(4)}`,
   );
