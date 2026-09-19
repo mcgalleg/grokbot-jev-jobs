@@ -205,7 +205,9 @@ Every mode also accepts optional `ats` and `url`.
 
 `400` is a bad request, with every problem named. `503` is a setup problem on
 our side, such as no candidate facts configured. `502` is Jev failing after
-retries.
+retries. Warm calls take 200–400ms. Each Jev attempt times out at 8s rather than
+the pipeline's 30s, because the first call on a cold deployment has been seen to
+hang and then succeed on retry.
 
 Knock-out answers from the candidate facts in the profile (`PROFILE_FACTS`, see
 [Your profile](#your-profile)); a request may override them with
