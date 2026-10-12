@@ -19,6 +19,8 @@ import {
  *  triage_reject  jev said the title is not worth reading
  *  fetched        full description retrieved from the ATS (stage 2)
  *  scored         jev scored resume vs description (stage 3)
+ *  location_reject the feed had no location; the posting page put the job
+ *                 outside the stage 0 location screen (iCIMS)
  *  expired        the posting left the board before we could read it
  *  unsupported    its ATS has no fetcher wired up, so it is terminal for now
  *  error          something failed; see `error`
@@ -29,6 +31,7 @@ export const STAGES = [
   'triage_reject',
   'fetched',
   'scored',
+  'location_reject',
   'expired',
   'unsupported',
   'error',

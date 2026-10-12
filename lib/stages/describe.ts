@@ -2,11 +2,13 @@ import { getSql, recordRun } from '../db/pg';
 import {
   fetchDescription,
   JobExpiredError,
+  LOCATION_FROM_POSTING,
   platformOf,
   PLATFORM_CONCURRENCY,
   type Platform,
 } from '../ats';
 import { mapPool } from '../pool';
+import { knownLocation, locationOk } from '../screen';
 import { expired, type StageOpts } from './types';
 
 export interface DescribeStats {
@@ -15,6 +17,8 @@ export interface DescribeStats {
   errors: number;
   reused: number;
   parked: number;
+  /** Deferred-location postings whose page put them outside the screen. */
+  locationRejected: number;
   skipped: number;
   chars: number;
   byPlatform: Record<string, { ok: number; expired: number; error: number }>;
@@ -25,6 +29,7 @@ interface Row {
   url: string;
   title: string;
   company: string;
+  location: string | null;
   ats: string | null;
   platform: Platform;
 }
@@ -48,6 +53,7 @@ export async function runDescribe(opts: StageOpts = {}): Promise<DescribeStats> 
     errors: 0,
     reused: 0,
     parked: 0,
+    locationRejected: 0,
     skipped: 0,
     chars: 0,
     byPlatform: {},
@@ -65,7 +71,7 @@ export async function runDescribe(opts: StageOpts = {}): Promise<DescribeStats> 
   if (stats.reused) log(`reusing ${stats.reused} descriptions already stored`);
 
   const pending = (await sql`
-    SELECT url, title, company, ats FROM jobs
+    SELECT url, title, company, location, ats FROM jobs
     WHERE stage = 'triaged' AND description IS NULL
     ORDER BY company LIMIT ${limit}`) as Omit<Row, 'platform'>[];
 
@@ -128,13 +134,29 @@ export async function runDescribe(opts: StageOpts = {}): Promise<DescribeStats> 
         const tally = (stats.byPlatform[platform] ??= { ok: 0, expired: 0, error: 0 });
         try {
           const d = await fetchDescription(row.url, row.ats, row.company);
-          stats.fetched++;
-          stats.chars += d.text.length;
+
+          // Stage 0 let this through without a location. Now the page has said
+          // where the job is, apply the same screen. A page that names no
+          // location either stays in, and score judges it from the text.
+          const deferred =
+            !knownLocation(row.location) && LOCATION_FROM_POSTING.includes(row.platform);
+          const location = deferred ? (d.location ?? null) : row.location;
           tally.ok++;
-          await sql`
-            UPDATE jobs SET stage = 'fetched', description = ${d.text},
-              description_chars = ${d.text.length}, fetched_at = ${now}, error = NULL
-            WHERE url = ${row.url}`;
+          if (deferred && (d.location || d.remote) && !locationOk(d.location, d.remote)) {
+            stats.locationRejected++;
+            await sql`
+              UPDATE jobs SET stage = 'location_reject', location = ${location},
+                remote = ${d.remote ?? null}, fetched_at = ${now}, error = NULL
+              WHERE url = ${row.url}`;
+          } else {
+            stats.fetched++;
+            stats.chars += d.text.length;
+            await sql`
+              UPDATE jobs SET stage = 'fetched', description = ${d.text},
+                description_chars = ${d.text.length}, fetched_at = ${now}, error = NULL,
+                location = ${location}, remote = COALESCE(${d.remote ?? null}::boolean, remote)
+              WHERE url = ${row.url}`;
+          }
         } catch (error) {
           const gone = error instanceof JobExpiredError;
           if (gone) {
@@ -159,6 +181,7 @@ export async function runDescribe(opts: StageOpts = {}): Promise<DescribeStats> 
   await recordRun('describe', startedAt, stats);
   log(
     `describe: fetched ${stats.fetched}, expired ${stats.expiredPostings}, errors ${stats.errors}` +
+      (stats.locationRejected ? `, ${stats.locationRejected} outside the location screen` : '') +
       (stats.skipped ? `, skipped ${stats.skipped} (out of time)` : ''),
   );
   return stats;

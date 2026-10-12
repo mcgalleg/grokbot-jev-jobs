@@ -6,6 +6,7 @@
  * reads title, company and location together and is far less brittle than a
  * regex over titles.
  */
+import { LOCATION_FROM_POSTING } from './ats';
 import type { FeedJob } from './feed';
 
 export interface ScreenConfig {
@@ -49,10 +50,13 @@ export function screen(job: FeedJob, cfg: ScreenConfig = DEFAULT_SCREEN): Screen
   // Location first: it is the dominant hard fact, so checking it first makes the
   // reason tally reflect what each later rule uniquely removes rather than
   // crediting the first rule in the list with everything it happened to catch.
-  const location = (job.location ?? '').toLowerCase();
-  const isRemote = job.remote === true || /\bremote\b|\banywhere\b/.test(location);
-  const inMetro = cfg.metroTerms.some((term) => location.includes(term));
-  if (!(cfg.allowRemote && isRemote) && !inMetro) return { keep: false, reason: 'location' };
+  // A platform whose feed rows never carry a location is let through and
+  // screened in describe, once its posting page says where the job is.
+  const deferred =
+    !knownLocation(job.location) && LOCATION_FROM_POSTING.includes(job.ats ?? '');
+  if (!deferred && !locationOk(job.location, job.remote, cfg)) {
+    return { keep: false, reason: 'location' };
+  }
 
   if (cfg.dropRecruiters && job.is_recruiter) return { keep: false, reason: 'recruiter' };
 
@@ -65,4 +69,21 @@ export function screen(job: FeedJob, cfg: ScreenConfig = DEFAULT_SCREEN): Screen
   }
 
   return { keep: true };
+}
+
+/** The feed writes "Not specified" where it has no location. */
+export function knownLocation(location: string | null | undefined): location is string {
+  return !!location && !/^not specified$/i.test(location.trim());
+}
+
+/** The location half of the screen, shared with describe for deferred locations. */
+export function locationOk(
+  location: string | null | undefined,
+  remote: boolean | null | undefined,
+  cfg: ScreenConfig = DEFAULT_SCREEN,
+): boolean {
+  const text = (location ?? '').toLowerCase();
+  const isRemote = remote === true || /\bremote\b|\banywhere\b/.test(text);
+  const inMetro = cfg.metroTerms.some((term) => text.includes(term));
+  return (cfg.allowRemote && isRemote) || inMetro;
 }

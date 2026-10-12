@@ -1,6 +1,6 @@
 import { getSql, recordRun } from '../db/pg';
 import { fetchManifest, feedAgeHours, streamChunks, type FeedJob } from '../feed';
-import { DEFAULT_SCREEN, screen, type ScreenConfig } from '../screen';
+import { DEFAULT_SCREEN, knownLocation, screen, type ScreenConfig } from '../screen';
 import { expired, type StageOpts } from './types';
 
 export interface IngestStats {
@@ -130,7 +130,8 @@ export async function runIngest(opts: IngestOpts = {}): Promise<IngestStats> {
  *
  * ON CONFLICT refreshes the feed-derived columns but deliberately leaves `stage`
  * alone: a posting we have already triaged or scored must not be dragged back to
- * 'new' because the feed restated its title.
+ * 'new' because the feed restated its title. A location the feed does not know
+ * is stored as NULL and never overwrites one describe read off the posting.
  *
  * The feed can list the same URL twice, and Postgres refuses an upsert that
  * touches one row twice in a single statement, so dedupe first (last wins).
@@ -144,7 +145,7 @@ async function insertJobs(
     j.url!,
     j.title!,
     j.company!,
-    j.location ?? null,
+    knownLocation(j.location) ? j.location : null,
     j.ats ?? null,
     j.skill_level ?? null,
     j.remote ?? null,
@@ -167,7 +168,7 @@ async function insertJobs(
      VALUES ${values}
      ON CONFLICT (url) DO UPDATE SET
        title = excluded.title,
-       location = excluded.location,
+       location = COALESCE(excluded.location, jobs.location),
        salary = excluded.salary,
        updated_at = excluded.updated_at`,
     rows.flat(),

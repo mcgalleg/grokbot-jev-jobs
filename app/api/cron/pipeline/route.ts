@@ -79,8 +79,11 @@ export async function GET(req: Request) {
       Math.min(hardDeadline, Date.now() + (hardDeadline - Date.now()) * share);
 
     const ingest = await runIngest({ since, deadline: budget(SHARE.ingest), log });
+    // iCIMS adds ~3,000 postings a day that stage 0 cannot screen by location,
+    // which takes a busy day past 5,000. Triage runs ~38/s, so the time share
+    // is still the binding limit, not this.
     const triage = await runTriage({
-      limit: 5_000,
+      limit: 10_000,
       concurrency: 8,
       deadline: budget(SHARE.triage),
       log,
