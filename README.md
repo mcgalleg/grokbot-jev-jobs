@@ -79,6 +79,11 @@ rules rather than weights:
   lifecycle the role works; when its top choice is pre-sales, scoring writes the
   dashboard's own Ignore label, so a wrong call is one click to undo.
   `pnpm purge:presales` is the backfill for rows scored before this existed.
+- **Stale** postings are auto-ignored. After scoring, the daily cron ignores every
+  open posting older than 45 days (`updated_at`, else `first_seen`), so postings
+  age out while they sit in the table. Un-ignoring writes a `restored` label
+  rather than deleting the row, which is what stops the sweep from ignoring it
+  again. `pnpm stale` runs it by hand; `pnpm ignore:stale` previews it.
 - **Hard blockers** are four separate questions — clearance, a specific degree,
   relocation, non-US work authorization — and the worst one scales the score down.
 
@@ -100,11 +105,20 @@ tracking system for postings that survive triage.
 | Lever | whole board, cached per company | 1 per company | 8 |
 | Ashby | whole board, cached per company | 1 per company | 4 |
 | Workday | per posting; no board endpoint carries text | 1 per posting | 3 |
-| BambooHR, iCIMS, Paylocity | not wired up | — | — |
+| iCIMS | per posting; JSON-LD on the `in_iframe=1` page | 1 per posting | 4 |
+| BambooHR, Paylocity | not wired up | — | — |
 
 Postings on a platform with no fetcher are moved to an `unsupported` stage rather
 than left pending, so they are not re-read every night. They are terminal until
 someone writes the fetcher: currently 315 of them, Paylocity and BambooHR.
+
+iCIMS is about a sixth of the feed, and the feed gives every iCIMS posting the
+location "Not specified". Stage 0 used to drop all of them on location, so none
+were ever seen. Now an unknown iCIMS location is let through to triage, and
+describe reads the location off the posting page (the header's "Job Locations"
+row, else the JSON-LD address) and applies the same location screen. Postings
+outside it land in `location_reject` without storing a description. A page that
+names no location at all stays in, and scoring judges it from the text.
 
 Two platform quirks are handled rather than papered over. Greenhouse customers
 who white-label the board onto their own domain drop the board token from the
@@ -347,6 +361,7 @@ pnpm triage   --limit 500              # jev on titles
 pnpm triage   --ats Workday --limit 500 # or target one platform
 pnpm describe --limit 500              # ATS descriptions
 pnpm score    --limit 200              # jev on resume vs description
+pnpm stale                             # ignore open postings older than 45 days
 pnpm report   --top 20                 # ranked list in the terminal
 ```
 

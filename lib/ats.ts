@@ -5,12 +5,19 @@
  * tracking system for the postings that survive triage. Greenhouse, Lever and
  * Ashby all expose a public JSON API keyed off the slug and id already encoded
  * in the posting URL, which is why the proof of concept starts with those three.
- * Workday, BambooHR, iCIMS and Paylocity need more work and are stubbed.
+ * Workday and iCIMS are one request per posting. BambooHR and Paylocity are
+ * not wired up.
  */
 
 export interface FetchedDescription {
   text: string;
   source: string;
+  /**
+   * Where the posting says the job is, for platforms whose feed rows carry no
+   * location (see LOCATION_FROM_POSTING). Absent means the fetcher found none.
+   */
+  location?: string;
+  remote?: boolean;
 }
 
 export class UnsupportedAtsError extends Error {}
@@ -80,22 +87,29 @@ export class HttpError extends Error {
 const BROWSER_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
 
+/** `text: true` returns the body as a string, for platforms that only serve HTML. */
 async function getJson(
   url: string,
-  init: { headers?: Record<string, string>; method?: string; body?: string; timeoutMs?: number } = {},
+  init: {
+    headers?: Record<string, string>;
+    method?: string;
+    body?: string;
+    timeoutMs?: number;
+    text?: boolean;
+  } = {},
 ): Promise<unknown> {
-  const { timeoutMs = 20_000, headers, ...rest } = init;
+  const { timeoutMs = 20_000, headers, text, ...rest } = init;
   const res = await fetch(url, {
     ...rest,
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
-      accept: 'application/json',
+      accept: text ? 'text/html' : 'application/json',
       'user-agent': 'jev-job-search/0.1 (personal job search)',
       ...headers,
     },
   });
   if (!res.ok) throw new HttpError(`HTTP ${res.status} for ${url}`, res.status);
-  return res.json();
+  return text ? res.text() : res.json();
 }
 
 /**
@@ -359,22 +373,165 @@ async function workday(url: string): Promise<FetchedDescription> {
   return { text: htmlToText(html), source: 'workday-cxs-api' };
 }
 
+// --------------------------------------------------------------------- iCIMS
+
+const ICIMS_URL = /^https?:\/\/[^/]+\.icims\.com\/jobs\/\d+/i;
+
+/** iCIMS fills address fields it does not have with this literal. */
+const UNAVAILABLE = 'UNAVAILABLE';
+
+/**
+ * iCIMS writes locations as `COUNTRY-REGION-CITY` ("US-CO-Denver") or
+ * `REGION-CITY` ("TX-HOUSTON"). Turned round into "Denver, CO, US" so the
+ * stage 0 metro terms (", co", "denver") match it the way they match the
+ * other platforms. Cities can contain hyphens, so the city is the remainder.
+ */
+export function icimsPlace(code: string): string {
+  const parts = code.split('-').map((p) => p.trim());
+  if (!/^[A-Z]{2,3}$/i.test(parts[0] ?? '') || parts.length < 2 || parts.some((p) => !p)) {
+    return code.trim();
+  }
+  if (parts.length === 2) return `${parts[1]}, ${parts[0]}`;
+  return `${parts.slice(2).join('-')}, ${parts[1]}, ${parts[0]}`;
+}
+
+interface LdAddress {
+  addressLocality?: string;
+  addressRegion?: string;
+  addressCountry?: string;
+}
+
+interface LdJobPosting {
+  '@type'?: string;
+  description?: string;
+  jobLocationType?: string;
+  applicantLocationRequirements?: unknown;
+  jobLocation?: { address?: LdAddress } | { address?: LdAddress }[];
+}
+
+function ldJobPosting(html: string): LdJobPosting | null {
+  for (const m of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    let data: unknown;
+    try {
+      data = JSON.parse(m[1]);
+    } catch {
+      continue;
+    }
+    for (const item of Array.isArray(data) ? data : [data]) {
+      if ((item as LdJobPosting)?.['@type'] === 'JobPosting') return item as LdJobPosting;
+    }
+  }
+  return null;
+}
+
+/** The label/value rows iCIMS prints above the description, keyed by lower-case label. */
+function icimsHeader(html: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const row =
+    /<dt[^>]*iCIMS_JobHeaderField[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*iCIMS_JobHeaderData[^>]*>([\s\S]*?)<\/dd>/gi;
+  for (const [, label, value] of html.matchAll(row)) {
+    const key = htmlToText(label).replace(/\s+/g, ' ').toLowerCase();
+    if (key && !out.has(key)) out.set(key, htmlToText(value));
+  }
+  return out;
+}
+
+/**
+ * The header's "Job Locations" or "Location" row is preferred: it is what the
+ * company typed. The JSON-LD address is the fallback, and on some boards every
+ * field in it is UNAVAILABLE, in which case there is no location to report.
+ */
+export function icimsLocation(html: string): { location?: string; remote: boolean } {
+  const header = icimsHeader(html);
+  const posting = ldJobPosting(html);
+
+  const remote =
+    /TELECOMMUTE/i.test(posting?.jobLocationType ?? '') ||
+    posting?.applicantLocationRequirements != null ||
+    [...header].some(
+      ([label, value]) =>
+        /telecommute|remote|work from home/.test(label) && /^(yes|true)\b/i.test(value),
+    );
+
+  const typed = header.get('job locations') ?? header.get('location');
+  if (typed) {
+    const places = typed.split(/\s*(?:\n|\||;)\s*/).filter(Boolean).map(icimsPlace);
+    if (places.length) return { location: places.join('; '), remote };
+  }
+
+  const addresses = posting?.jobLocation
+    ? Array.isArray(posting.jobLocation)
+      ? posting.jobLocation
+      : [posting.jobLocation]
+    : [];
+  const places = addresses
+    .map(({ address: a }) =>
+      [a?.addressLocality, a?.addressRegion, a?.addressCountry]
+        .filter((v): v is string => !!v && v !== UNAVAILABLE)
+        .map((v, i) => (i === 0 ? icimsPlace(v) : v))
+        .join(', '),
+    )
+    .filter(Boolean);
+  return { location: places.length ? places.join('; ') : undefined, remote };
+}
+
+/**
+ * iCIMS has no public board API, so this is one request per posting. The
+ * `in_iframe=1` view is the same posting without the company's site chrome,
+ * under half the bytes. A withdrawn posting answers 410.
+ *
+ * The feed gives every iCIMS posting the location "Not specified", so this
+ * fetcher also reports where the job is, and describe re-applies the stage 0
+ * location screen to the answer.
+ */
+async function icims(url: string): Promise<FetchedDescription> {
+  if (!ICIMS_URL.test(url)) throw new UnsupportedAtsError(`Unrecognised iCIMS URL: ${url}`);
+  const page = new URL(url);
+  page.searchParams.set('in_iframe', '1');
+
+  let html: string;
+  try {
+    html = (await getJsonWithRetry(page.href, {
+      text: true,
+      headers: { 'user-agent': BROWSER_UA },
+    })) as string;
+  } catch (error) {
+    if (error instanceof HttpError && (error.statusCode === 410 || error.statusCode === 404)) {
+      throw new JobExpiredError(`iCIMS no longer lists ${url} (HTTP ${error.statusCode})`);
+    }
+    throw error;
+  }
+
+  const body = ldJobPosting(html)?.description;
+  if (!body) throw new Error(`iCIMS page has no JobPosting description: ${url}`);
+  return { text: htmlToText(body), source: 'icims-page', ...icimsLocation(html) };
+}
+
 // ------------------------------------------------------------------ dispatch
 
-export const SUPPORTED_ATS = ['Greenhouse', 'Lever', 'Ashby', 'Workday'] as const;
+export const SUPPORTED_ATS = ['Greenhouse', 'Lever', 'Ashby', 'Workday', 'iCIMS'] as const;
 
 export type Platform = (typeof SUPPORTED_ATS)[number];
 
 /**
+ * Platforms whose feed rows carry no location but whose posting page does.
+ * Stage 0 lets their unknown locations through, and describe screens them
+ * once the page has said where the job is.
+ */
+export const LOCATION_FROM_POSTING: readonly string[] = ['iCIMS'];
+
+/**
  * Per-platform request ceilings, borrowed from the aggregator's tuning.
  * Workday is the tightest limiter and is also the only platform billed one
- * request per posting rather than one per company.
+ * request per posting rather than one per company. iCIMS is per posting too,
+ * but spread over some 1,700 company hosts.
  */
 export const PLATFORM_CONCURRENCY: Record<Platform, number> = {
   Greenhouse: 8,
   Lever: 8,
   Ashby: 4,
   Workday: 3,
+  iCIMS: 4,
 };
 
 /** Which fetcher will handle this row, or null if none will. */
@@ -384,18 +541,12 @@ export function platformOf(ats: string | null | undefined, url: string): Platfor
   if (LEVER_URL.test(url)) return 'Lever';
   if (ASHBY_URL.test(url)) return 'Ashby';
   if (parseWorkdayUrl(url)) return 'Workday';
+  if (ICIMS_URL.test(url)) return 'iCIMS';
   return null;
 }
 
 export function isSupported(ats: string | null | undefined, url: string): boolean {
-  if (ats && (SUPPORTED_ATS as readonly string[]).includes(ats)) return true;
-  return (
-    GREENHOUSE_URL.test(url) ||
-    GREENHOUSE_JID.test(url) ||
-    LEVER_URL.test(url) ||
-    ASHBY_URL.test(url) ||
-    parseWorkdayUrl(url) !== null
-  );
+  return platformOf(ats, url) !== null;
 }
 
 export async function fetchDescription(
@@ -409,5 +560,6 @@ export async function fetchDescription(
   if (ats === 'Lever' || LEVER_URL.test(url)) return lever(url);
   if (ats === 'Ashby' || ASHBY_URL.test(url)) return ashby(url);
   if (ats === 'Workday' || parseWorkdayUrl(url)) return workday(url);
+  if (ats === 'iCIMS' || ICIMS_URL.test(url)) return icims(url);
   throw new UnsupportedAtsError(`No fetcher for ${ats ?? 'unknown ATS'}: ${url}`);
 }

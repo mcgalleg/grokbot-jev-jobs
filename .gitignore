@@ -53,3 +53,12 @@ next-env.d.ts
 #             the README for what a fresh clone needs to recreate.
 output/
 profile/
+
+# local secrets — never commit
+data/*.local.md
+data/apply-ab-state.json
+data/apply-ab-log.jsonl
+data/apply-page-brain-log.jsonl
+data/apply-efficiency-learnings.md
+data/local/
+.local-secrets/

@@ -29,7 +29,8 @@ export const STRONG_THRESHOLD = 6;
 
 /**
  * Stages the nightly cron still has work to do on. Everything else is terminal:
- * scored, triage_reject, expired, unsupported and error are all final answers.
+ * scored, triage_reject, location_reject, expired, unsupported and error are
+ * all final answers.
  */
 const PENDING_STAGES = ['new', 'triaged', 'fetched'] as const;
 

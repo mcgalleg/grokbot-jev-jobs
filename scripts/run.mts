@@ -5,7 +5,7 @@
  * there is exactly one implementation of each stage and no chance of the
  * scheduled run and the hand-run diverging.
  *
- * Usage: pnpm ingest | triage | describe | score | pipeline  [flags]
+ * Usage: pnpm ingest | triage | describe | score | stale | pipeline  [flags]
  */
 import '../lib/env.ts';
 import { getSql, migrate } from '../lib/db/pg.ts';
@@ -13,6 +13,7 @@ import { runIngest } from '../lib/stages/ingest.ts';
 import { runTriage } from '../lib/stages/triage.ts';
 import { runDescribe } from '../lib/stages/describe.ts';
 import { runScore } from '../lib/stages/score.ts';
+import { runIgnoreStale } from '../lib/stages/stale.ts';
 import { DEFAULT_SCREEN } from '../lib/screen.ts';
 
 const [stage, ...args] = process.argv.slice(2);
@@ -66,18 +67,23 @@ switch (stage) {
     await runScore({ limit, concurrency });
     break;
   }
+  case 'stale': {
+    await runIgnoreStale({ days: num('days') });
+    break;
+  }
   case 'pipeline': {
     const n = limit ?? 500;
     await runIngest({ maxChunks: num('chunks'), since: str('since') ?? null });
     await runTriage({ limit: n, concurrency });
     await runDescribe({ limit: n, concurrency });
     await runScore({ limit: n, concurrency });
+    await runIgnoreStale();
     break;
   }
   default:
     console.error(
       `unknown stage: ${stage ?? '(none)'}\n` +
-        'expected one of: ingest, triage, describe, score, pipeline',
+        'expected one of: ingest, triage, describe, score, stale, pipeline',
     );
     process.exit(1);
 }
