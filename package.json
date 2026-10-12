@@ -1,5 +1,5 @@
 {
-  "name": "jev-job-search",
+  "name": "grokbot-jev-jobs",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -13,6 +13,7 @@
     "triage": "tsx scripts/run.mts triage",
     "describe": "tsx scripts/run.mts describe",
     "score": "tsx scripts/run.mts score",
+    "stale": "tsx scripts/run.mts stale",
     "pipeline": "tsx scripts/run.mts pipeline",
     "report": "tsx scripts/report.mts",
     "check:jev": "tsx scripts/check-jev.mts",
@@ -20,7 +21,8 @@
     "migrate:neon": "tsx scripts/migrate-to-neon.mts",
     "profile:push": "tsx scripts/profile-push.mts",
     "apply:page-brain": "tsx scripts/apply-page-brain.mts",
-    "purge:presales": "tsx scripts/purge-presales.mts"
+    "purge:presales": "tsx scripts/purge-presales.mts",
+    "ignore:stale": "tsx scripts/ignore-stale.mts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.85",

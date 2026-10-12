@@ -79,6 +79,11 @@ rules rather than weights:
   lifecycle the role works; when its top choice is pre-sales, scoring writes the
   dashboard's own Ignore label, so a wrong call is one click to undo.
   `pnpm purge:presales` is the backfill for rows scored before this existed.
+- **Stale** postings are auto-ignored. After scoring, the daily cron ignores every
+  open posting older than 45 days (`updated_at`, else `first_seen`), so postings
+  age out while they sit in the table. Un-ignoring writes a `restored` label
+  rather than deleting the row, which is what stops the sweep from ignoring it
+  again. `pnpm stale` runs it by hand; `pnpm ignore:stale` previews it.
 - **Hard blockers** are four separate questions — clearance, a specific degree,
   relocation, non-US work authorization — and the worst one scales the score down.
 
@@ -347,6 +352,7 @@ pnpm triage   --limit 500              # jev on titles
 pnpm triage   --ats Workday --limit 500 # or target one platform
 pnpm describe --limit 500              # ATS descriptions
 pnpm score    --limit 200              # jev on resume vs description
+pnpm stale                             # ignore open postings older than 45 days
 pnpm report   --top 20                 # ranked list in the terminal
 ```
 

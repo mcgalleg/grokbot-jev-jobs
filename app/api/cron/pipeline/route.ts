@@ -3,6 +3,7 @@ import { runIngest } from '@/lib/stages/ingest';
 import { runTriage } from '@/lib/stages/triage';
 import { runDescribe } from '@/lib/stages/describe';
 import { runScore } from '@/lib/stages/score';
+import { runIgnoreStale } from '@/lib/stages/stale';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,6 +97,8 @@ export async function GET(req: Request) {
       deadline: hardDeadline,
       log,
     });
+    // One statement, no model calls, so it needs no share of the budget.
+    const stale = await runIgnoreStale({ log });
 
     const summary = {
       ok: true,
@@ -110,6 +113,7 @@ export async function GET(req: Request) {
         errors: describe.errors,
       },
       score: { scored: score.scored, errors: score.errors },
+      stale: { ignored: stale.ignored },
       stoppedEarly:
         ingest.stoppedEarly || triage.stoppedEarly || describe.stoppedEarly || score.stoppedEarly,
     };

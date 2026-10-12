@@ -5,7 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { revalidatePath } from 'next/cache';
 import { ensureApplySchema, getDb, hasDatabase } from '@/lib/db/pg';
 import { applyAttempts, applies, jobs, labels } from '@/lib/db/pg-schema';
-import { IGNORED } from '@/lib/verdicts';
+import { IGNORED, RESTORED } from '@/lib/verdicts';
 import {
   type ApplyRequestPayload,
   type ApplyStatus,
@@ -297,7 +297,14 @@ export async function setIgnored(jobUrl: string, ignored: boolean): Promise<void
         set: { verdict: IGNORED },
       });
   } else {
-    await db.delete(labels).where(eq(labels.url, jobUrl));
+    // Not a delete: the row is what tells the stale sweep this was restored on purpose.
+    await db
+      .insert(labels)
+      .values({ url: jobUrl, verdict: RESTORED })
+      .onConflictDoUpdate({
+        target: labels.url,
+        set: { verdict: RESTORED },
+      });
   }
   revalidatePath('/');
 }

@@ -93,7 +93,8 @@ export const jobs = pgTable(
 );
 
 /**
- * User-set "not interested". The only verdict written today is `ignored`.
+ * User-set "not interested": `ignored`, or `restored` after the user un-ignores
+ * (a marker that keeps the stale sweep from re-ignoring it).
  * Applied used to live here as a local toggle; that column is no longer written.
  */
 export const labels = pgTable('labels', {
